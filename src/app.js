@@ -81,6 +81,19 @@ app.use(optional);
 const { getMarqueeNotices } = require('./modules/admin/services/marquee.service');
 app.get('/marquee', getMarqueeNotices);
 
+// ─── Public Dashboard Stats (For Login Page Promo) ───────────────────────────
+// Keep this public and register it before routers that require tenant selection.
+app.get('/api/public/stats', async (req, res) => {
+  try {
+    const dashboardService = require('./modules/admin/services/dashboard/dashboardService');
+    const stats = await dashboardService.getDashboardStats();
+    return res.json({ success: true, data: stats });
+  } catch (error) {
+    console.error("Public stats error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // ─── Azure Blob upload endpoints ─────────────────────────────────────────────
 function getAudioDurationInSeconds(filePath) {
   try {
@@ -252,17 +265,7 @@ app.use('/', proctoringRouter);
 // ─── Dashboard (admin analytics) ─────────────────────────────────────────────
 app.use('/api/dashboard', dashboardRoutes);
 
-// ─── Public Dashboard Stats (For Login Page Promo) ───────────────────────────
-app.get('/api/public/stats', async (req, res) => {
-  try {
-    const dashboardService = require('./modules/admin/services/dashboard/dashboardService');
-    const stats = await dashboardService.getDashboardStats();
-    res.json({ success: true, data: stats });
-  } catch (error) {
-    console.error("Public stats error:", error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+
 
 // ─── Questions route (questions/:id) from placements ─────────────────────────
 const { getQuestionById, updateQuestion } = require('./modules/student/services/placements.service');
