@@ -1,3 +1,3 @@
-const graphqlUrl = "https://smp-assessmentgqlapi-live.livelyglacier-cf8dd916.centralindia.azurecontainerapps.io";
+const graphqlUrl = process.env.GRAPHQL_URL || `http://localhost:${process.env.PORT || 5000}/gql`;
 
-module.exports = { graphqlUrl }
+module.exports = { graphqlUrl };

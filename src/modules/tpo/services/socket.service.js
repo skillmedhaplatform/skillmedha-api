@@ -2,9 +2,7 @@ require("dotenv").config({
   path: "../../.env",
 });
 
-const express = require("express");
-const { createServer } = require("http");
-const { Server } = require("socket.io");
+
 const mongoDB = require("mongodb");
 const {
   getShortParaScore,
@@ -27,10 +25,7 @@ const { connectTodb } = require("../../../shared/db/connection");
 const { mandatory: authenticate } = require("../../../shared/middleware/auth.middleware");
 const { selectTenantDB } = require("../../../shared/middleware/selectTenantDB.middleware");
 
-const app = express();
-const httpServer = createServer(app);
-const io = new Server(httpServer, { cors: "*" });
-const port = 2222;
+module.exports = function(io, app) {
 
 // ===== Register middleware ONCE, UP FRONT =====
 io.use(async (socket, next) => {
@@ -1433,7 +1428,7 @@ io.on("connection", (socket) => {
 });
 
 // Add Express middleware for parsing JSON
-app.use(express.json());
+// app.use(express.json()); // Already configured in app.js
 // app.use(authenticate);
 // app.use(selectTenantDB);
 // HTTP endpoint for proctoring server to request frames
@@ -1764,8 +1759,4 @@ app.get("/active-proctoring-sessions", (req, res) => {
   }
 });
 
-httpServer.listen(port, () =>
-  console.log(`socket server running at port ${port}`),
-);
-
-module.exports = { io, app, httpServer };
+};

@@ -300,10 +300,8 @@ if (redisClient && redisSubscriber) {
 }
 
 // Attach socket handler (original socket.js logic, re-imported)
-// const attachSocketHandlers = require('./modules/tpo/services/socket.service');
-// socket.service.js exports the httpServer + io setup — we pass our io instance
-// The original socket.js creates its own httpServer, but we inject ours here
-// by exporting io and using it
+const attachSocketHandlers = require('./modules/tpo/services/socket.service');
+attachSocketHandlers(io, app);
 
 // ─── Server start ─────────────────────────────────────────────────────────────
 async function startServer() {

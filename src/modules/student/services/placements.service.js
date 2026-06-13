@@ -138,6 +138,7 @@ module.exports.getAllJobProfiles = async (req, res) => {
   if (!req.tenantDB)
     return res.status(500).json({ error: "No tenant DB available" });
   try {
+    const startTimeTotal = performance.now();
     let { cursor = null, limit = 20 } = req.query;
     limit = parseInt(limit, 10);
 
@@ -152,27 +153,38 @@ module.exports.getAllJobProfiles = async (req, res) => {
     }
 
     pipeline.push({ $sort: { _id: -1 } });
-
     pipeline.push({ $limit: limit + 1 });
 
-    const docs = await placements.aggregate(pipeline).toArray();
+    // Optimize N+1 query by using $lookup
+    pipeline.push({
+      $addFields: {
+        profileIdStr: { $toString: "$_id" }
+      }
+    });
+    
+    pipeline.push({
+      $lookup: {
+        from: "job",
+        localField: "profileIdStr",
+        foreignField: "profileId",
+        as: "companies"
+      }
+    });
 
-    const getCompaniesLikedToJobProfile = await Promise.all(
-      docs.map(async (e) => {
-        return {
-          ...e,
-          companies: await job
-            .find({
-              profileId: e._id.toString(),
-            })
-            .toArray(),
-        };
-      })
-    );
+    pipeline.push({
+      $project: {
+        profileIdStr: 0
+      }
+    });
+
+    const startTimeDb = performance.now();
+    const docs = await placements.aggregate(pipeline).toArray();
+    const durationDb = performance.now() - startTimeDb;
+    console.log(`[getAllJobProfiles] Aggregation with $lookup completed in ${durationDb.toFixed(2)}ms`);
 
     let hasNext = false;
     let nextCursor = null;
-    let data = getCompaniesLikedToJobProfile;
+    let data = docs;
 
     if (docs.length > limit) {
       hasNext = true;
@@ -180,6 +192,9 @@ module.exports.getAllJobProfiles = async (req, res) => {
       nextCursor = nextDoc._id.toString();
       data = docs.slice(0, limit);
     }
+
+    const durationTotal = performance.now() - startTimeTotal;
+    console.log(`[getAllJobProfiles] Total execution time: ${durationTotal.toFixed(2)}ms`);
 
     res.status(200).json({
       data,
