@@ -2703,5 +2703,241 @@ app.post("/updateLastAccessed", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CART & WISHLIST — paste above module.exports = app;
+// ─────────────────────────────────────────────────────────────────────────────
 
+// Helper: resolve courseId from tenant DB first, then KSquare fallback
+async function resolveCourse(courseId, tenantDB) {
+  const { internships: tenantCourses } = connectTodb(tenantDB);
+  let course = await tenantCourses.findOne({ _id: new mongoDB.ObjectId(courseId) });
+  if (course) return course;
+
+  const kSquareDB = await getTenantDB("KSquare");
+  const { internships: kCourses } = connectTodb(kSquareDB);
+  return await kCourses.findOne({ _id: new mongoDB.ObjectId(courseId) }) || null;
+}
+
+// Helper: compute cart total
+function computeCartTotal(items = []) {
+  return items.reduce((sum, i) => sum + (i.discountedPrice ?? i.price ?? 0), 0);
+}
+
+// Helper: re-fetch & return enriched cart (used after every mutation)
+async function sendCartResponse(req, res) {
+  const { cart, student} = connectTodb(req.tenantDB);
+  const cartDoc = await cart.findOne({ student: req.userID });
+
+  if (!cartDoc?.items?.length) return res.status(200).json({ items: [], totalAmount: 0 });
+
+  const enriched = (
+    await Promise.all(
+      cartDoc.items.map(async (item) => {
+        const course = await resolveCourse(item.courseId, req.tenantDB);
+        if (!course) return null;
+        return {
+          _id: item._id,
+          courseId: {
+            _id: course._id.toString(),
+            title: course.title,
+            coverImage: course.media?.thumbnailImage || course.coverImage || null,
+            category: course.category,
+            difficulty: course.difficulty,
+            type: course.type,
+          },
+          price: item.price,
+          discountedPrice: item.discountedPrice,
+          addedAt: item.addedAt,
+        };
+      })
+    )
+  ).filter(Boolean);
+
+  return res.status(200).json({
+    items: enriched,
+    totalAmount: computeCartTotal(enriched),
+  });
+}
+
+// Helper: re-fetch & return enriched wishlist (used after every mutation)
+async function sendWishlistResponse(req, res) {
+  const { wishlist, student} = connectTodb(req.tenantDB);
+  const wishlistDoc = await wishlist.findOne({ student: req.userID });
+
+  if (!wishlistDoc?.items?.length) return res.status(200).json({ items: [] });
+
+  const enriched = (
+    await Promise.all(
+      wishlistDoc.items.map(async (item) => {
+        const course = await resolveCourse(item.courseId, req.tenantDB);
+        if (!course) return null;
+        return {
+          _id: item._id,
+          courseId: {
+            _id: course._id.toString(),
+            title: course.title,
+            coverImage: course.media?.thumbnailImage || course.coverImage || null,
+            category: course.category,
+            difficulty: course.difficulty,
+            type: course.type,
+            price: course.pricing?.originalPrice ?? course.price ?? 0,
+            discountedPrice: course.pricing?.finalPrice ?? course.discountedPrice ?? 0,
+          },
+          addedAt: item.addedAt,
+        };
+      })
+    )
+  ).filter(Boolean);
+
+  return res.status(200).json({ items: enriched });
+}
+
+// ── CART ──────────────────────────────────────────────────────────────────────
+
+// GET /cart
+app.get("/cart", authenticate, selectTenantDB, async (req, res) => {
+  if (!req.tenantDB) return res.status(500).json({ error: "No tenant DB available" });
+  try {
+    return await sendCartResponse(req, res);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /cart  — body: { courseId }
+app.post("/cart", authenticate, selectTenantDB, async (req, res) => {
+  if (!req.tenantDB) return res.status(500).json({ error: "No tenant DB available" });
+
+  try {
+    const { cart,student } = connectTodb(req.tenantDB);
+    const { courseId } = req.body;
+
+    if (!courseId) return res.status(400).json({ error: "courseId is required" });
+
+    const course = await resolveCourse(courseId, req.tenantDB);
+    if (!course) return res.status(404).json({ error: "Course not found" });
+
+    const cartDoc = await cart.findOne({ student: req.userID });
+    if (cartDoc?.items?.some((i) => i.courseId === courseId))
+      return res.status(400).json({ error: "Course already in cart" });
+
+    await cart.findOneAndUpdate(
+      { student: req.userID },
+      {
+        $push: {
+          items: {
+            _id: new mongoDB.ObjectId(),
+            courseId,
+            price: course.pricing?.originalPrice ?? course.price ?? 0,
+            discountedPrice: course.pricing?.finalPrice ?? course.discountedPrice ?? 0,
+            addedAt: new Date().getTime(),
+          },
+        },
+        $set: { updatedAt: new Date().getTime() },
+        $setOnInsert: { createdAt: new Date().getTime() },
+      },
+      { upsert: true }
+    );
+
+    return await sendCartResponse(req, res);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /cart/:courseId  — remove one item
+app.delete("/cart/:courseId", authenticate, selectTenantDB, async (req, res) => {
+  if (!req.tenantDB) return res.status(500).json({ error: "No tenant DB available" });
+  try {
+    const { cart,student } = connectTodb(req.tenantDB);
+    await cart.findOneAndUpdate(
+      { student: req.userID },
+      { $pull: { items: { courseId: req.params.courseId } }, $set: { updatedAt: new Date().getTime() } }
+    );
+    return await sendCartResponse(req, res);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /cart  — clear entire cart
+app.delete("/cart", authenticate, selectTenantDB, async (req, res) => {
+  if (!req.tenantDB) return res.status(500).json({ error: "No tenant DB available" });
+  try {
+    const { cart,student } = connectTodb(req.tenantDB);
+    await cart.findOneAndUpdate(
+      { student: req.userID },
+      { $set: { items: [], updatedAt: new Date().getTime() } },
+      { upsert: true }
+    );
+    res.status(200).json({ items: [], totalAmount: 0 });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── WISHLIST ──────────────────────────────────────────────────────────────────
+
+// GET /wishlist
+app.get("/wishlist", authenticate, selectTenantDB, async (req, res) => {
+  if (!req.tenantDB) return res.status(500).json({ error: "No tenant DB available" });
+  try {
+    return await sendWishlistResponse(req, res);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /wishlist  — body: { courseId }
+app.post("/wishlist", authenticate, selectTenantDB, async (req, res) => {
+  if (!req.tenantDB) return res.status(500).json({ error: "No tenant DB available" });
+  try {
+    const { wishlist,student } = connectTodb(req.tenantDB);
+    const { courseId } = req.body;
+
+    if (!courseId) return res.status(400).json({ error: "courseId is required" });
+
+    const course = await resolveCourse(courseId, req.tenantDB);
+    if (!course) return res.status(404).json({ error: "Course not found" });
+
+    const wishlistDoc = await wishlist.findOne({ student: req.userID });
+    if (wishlistDoc?.items?.some((i) => i.courseId === courseId))
+      return res.status(400).json({ error: "Course already in wishlist" });
+
+    await wishlist.findOneAndUpdate(
+      { student: req.userID },
+      {
+        $push: {
+          items: {
+            _id: new mongoDB.ObjectId(),
+            courseId,
+            addedAt: new Date().getTime(),
+          },
+        },
+        $set: { updatedAt: new Date().getTime() },
+        $setOnInsert: { createdAt: new Date().getTime() },
+      },
+      { upsert: true }
+    );
+
+    return await sendWishlistResponse(req, res);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /wishlist/:courseId
+app.delete("/wishlist/:courseId", authenticate, selectTenantDB, async (req, res) => {
+  if (!req.tenantDB) return res.status(500).json({ error: "No tenant DB available" });
+  try {
+    const { wishlist,student } = connectTodb(req.tenantDB);
+    await wishlist.findOneAndUpdate(
+      { student: req.userID },
+      { $pull: { items: { courseId: req.params.courseId } }, $set: { updatedAt: new Date().getTime() } }
+    );
+    return await sendWishlistResponse(req, res);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 module.exports = app;

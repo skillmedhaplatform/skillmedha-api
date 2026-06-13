@@ -10,6 +10,8 @@ const { selectTenantDB } = require('../../shared/middleware/selectTenantDB.middl
 
 // ─── Services (original business logic, re-imported with fixed paths) ─────────
 const studentRouter     = require('./services/studentRouter.service');
+const atsChecker     = require('./atsChecker/server');
+
 const resumeSvc         = require('./services/resume.service');
 const placementsSvc     = require('./services/placements.service');
 const practiceSvc       = require('./services/practice.service');
@@ -26,12 +28,13 @@ const storage = multer.diskStorage({
 const upload = multer({ storage, fileFilter: (req, file, cb) => cb(null, true) });
 
 const router = Router();
-const atsRouter = require('./routes/atscheckerRoutes/ats');
-const fileUploadRouter = require('./routes/atscheckerRoutes/fileUpload');
+
 
 
 // ─── Auth / Profile (student registration, login, profile management) ─────────
 router.use('/', studentRouter);
+
+router.use('/', atsChecker);
 
 // ─── Resume ──────────────────────────────────────────────────────────────────
 router.post('/createResume', mandatory, selectTenantDB, resumeSvc.createResume || ((req, res) => res.status(501).json({ error: 'Not implemented' })));
@@ -59,8 +62,6 @@ router.post('/savePracResults/:pracId',        mandatory, selectTenantDB, practi
 router.get('/getStudentPracResults/:userId',   mandatory, selectTenantDB, practiceSvc.getStudentPracResults);
 
 
-router.use('/ats', optional, selectTenantDB, atsRouter);
 
-router.use('/api', optional, selectTenantDB, fileUploadRouter);
 
 module.exports = router;
