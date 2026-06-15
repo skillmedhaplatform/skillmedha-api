@@ -2,14 +2,16 @@
  * atsController.js
  * Express controller handling all ATS Checker API endpoints.
  * Orchestrates: file upload → text extraction → AI analysis → blob storage → DB save
- * 
- * Uses MongoDB native driver with tenant-aware database connections.
+ *
+ * Place this file in your Node.js/Express API repo under: controllers/atsController.js
  */
 
 const { v4: uuidv4 } = require("uuid");
-const atsService = require("../services/ats.service");
+const ATSAnalysis = require("../models/ATSAnalysis");
+const ATSFeedback = require("../models/ATSFeedback");
+const Resume = require("../models/Resume");
 const atsAIService = require("../services/atsAIService");
-const azureBlobService = require("../../../shared/utils/azureBlobService");
+const azureBlobService = require("../services/azureBlobService");
 
 // ── Input Validators ──────────────────────────────────────────────────────
 
@@ -41,14 +43,6 @@ const analyzeResume = async (req, res) => {
     const studentIdError = validateStudentId(studentId);
     if (studentIdError) {
       return res.status(400).json({ success: false, message: studentIdError });
-    }
-
-    // Ensure tenant DB is available
-    if (!req.tenantDB) {
-      return res.status(500).json({
-        success: false,
-        message: "Tenant database not configured",
-      });
     }
 
     if (!req.file) {
@@ -90,26 +84,46 @@ const analyzeResume = async (req, res) => {
       });
     }
 
-    // ── 4. Save analysis to tenant DB using service ──────────────────────
-    const doc = await atsService.analyzeAndSaveResume(req.tenantDB, {
-      studentId,
-      analysis,
-      extractedText,
-      jobDescription,
+    // ── 4. Save resume to Resume collection ─────────────────────────────
+    const resume = await Resume.create({
       fileName: req.file.originalname,
       fileUrl: originalFileUrl,
       blobName: originalBlobName,
-      tokensUsed,
-      processingTimeMs: Date.now() - startTime,
-      aiModel: model,
+      extractedText: extractedText.slice(0, 10000),
+      atsScore: analysis.overallScore,
     });
 
-    // ── 5. Return response ───────────────────────────────────────────────
+    // ── 5. Save analysis to ATSAnalysis collection ──────────────────────
+    const analysisId = uuidv4();
+    const doc = await ATSAnalysis.create({
+      analysisId,
+      studentId,
+      overallScore: analysis.overallScore,
+      grade: analysis.grade,
+      categoryScores: analysis.categoryScores,
+      suggestions: analysis.suggestions,
+      strengths: analysis.strengths,
+      criticalIssues: analysis.criticalIssues,
+      decisions: {},
+      jobDescription,
+      extractedText: extractedText.slice(0, 10000), // Store truncated for re-analysis
+      originalFileName: req.file.originalname,
+      originalFileUrl,
+      originalBlobName,
+      updatedResumeUrl: null,
+      aiModel: model,
+      tokensUsed,
+      processingTimeMs: Date.now() - startTime,
+      status: "complete",
+    });
+
+    // ── 6. Return response ───────────────────────────────────────────────
     return res.status(201).json({
       success: true,
       message: "Resume analyzed successfully.",
       data: {
         analysisId: doc.analysisId,
+        resumeId: resume._id,
         overallScore: doc.overallScore,
         grade: doc.grade,
         categoryScores: doc.categoryScores,
@@ -154,14 +168,6 @@ const analyzeExistingResume = async (req, res) => {
       return res.status(400).json({ success: false, message: studentIdError });
     }
 
-    // Ensure tenant DB is available
-    if (!req.tenantDB) {
-      return res.status(500).json({
-        success: false,
-        message: "Tenant database not configured",
-      });
-    }
-
     if (!blobName) {
       return res.status(400).json({
         success: false,
@@ -194,21 +200,39 @@ const analyzeExistingResume = async (req, res) => {
         jobDescription || ""
       );
 
-    // ── 4. Save analysis to tenant DB using service ──────────────────────
-    const doc = await atsService.analyzeAndSaveResume(req.tenantDB, {
+    // ── 4. Update Resume collection ─────────────────────────────────────
+    if (resumeId) {
+      await Resume.findByIdAndUpdate(resumeId, {
+        atsScore: analysis.overallScore,
+        extractedText: extractedText.slice(0, 10000),
+      });
+    }
+
+    // ── 5. Save analysis to ATSAnalysis collection ──────────────────────
+    const analysisId = uuidv4();
+    const doc = await ATSAnalysis.create({
+      analysisId,
       studentId,
-      analysis,
-      extractedText,
+      overallScore: analysis.overallScore,
+      grade: analysis.grade,
+      categoryScores: analysis.categoryScores,
+      suggestions: analysis.suggestions,
+      strengths: analysis.strengths,
+      criticalIssues: analysis.criticalIssues,
+      decisions: {},
       jobDescription: jobDescription || "",
-      fileName,
-      fileUrl: req.body.fileUrl,
-      blobName,
+      extractedText: extractedText.slice(0, 10000),
+      originalFileName: fileName,
+      originalFileUrl: req.body.fileUrl, // Pass the SAS URL if available
+      originalBlobName: blobName,
+      updatedResumeUrl: null,
+      aiModel: model,
       tokensUsed,
       processingTimeMs: Date.now() - startTime,
-      aiModel: model,
+      status: "complete",
     });
 
-    // ── 5. Return response ───────────────────────────────────────────────
+    // ── 6. Return response ───────────────────────────────────────────────
     return res.status(201).json({
       success: true,
       message: "Resume analyzed successfully.",
@@ -257,14 +281,6 @@ const generateUpdatedResume = async (req, res) => {
       return res.status(400).json({ success: false, message: analysisIdError });
     }
 
-    // Ensure tenant DB is available
-    if (!req.tenantDB) {
-      return res.status(500).json({
-        success: false,
-        message: "Tenant database not configured",
-      });
-    }
-
     if (!decisions || typeof decisions !== "object") {
       return res.status(400).json({
         success: false,
@@ -272,8 +288,11 @@ const generateUpdatedResume = async (req, res) => {
       });
     }
 
-    // ── 2. Fetch original analysis from tenant DB ────────────────────────
-    const doc = await atsService.getAnalysisById(req.tenantDB, analysisId);
+    // ── 2. Fetch original analysis from DB ───────────────────────────────
+    const doc = await ATSAnalysis.findOne({
+      analysisId,
+      isDeleted: { $ne: true },
+    });
 
     if (!doc) {
       return res.status(404).json({
@@ -324,13 +343,17 @@ const generateUpdatedResume = async (req, res) => {
       });
     }
 
-    // ── 6. Persist decisions and updated resume URL to tenant DB ──────────
-    await atsService.updateAnalysisWithDecisions(
-      req.tenantDB,
-      analysisId,
-      decisions,
-      updatedResumeUrl,
-      updatedBlobName
+    // ── 6. Persist decisions and updated resume URL to DB ────────────────
+    const decisionsMap = new Map(Object.entries(decisions));
+    await ATSAnalysis.findOneAndUpdate(
+      { analysisId },
+      {
+        decisions: decisionsMap,
+        keptCount,
+        abortedCount,
+        updatedResumeUrl,
+        updatedBlobName,
+      }
     );
 
     // ── 7. Respond ───────────────────────────────────────────────────────
@@ -363,38 +386,45 @@ const getHistory = async (req, res) => {
     const { studentId } = req.params;
     const page = Math.max(1, parseInt(req.query.page || "1", 10));
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit || "20", 10)));
+    const skip = (page - 1) * limit;
 
     const studentIdError = validateStudentId(studentId);
     if (studentIdError) {
       return res.status(400).json({ success: false, message: studentIdError });
     }
 
-    // Ensure tenant DB is available
-    if (!req.tenantDB) {
-      return res.status(500).json({
-        success: false,
-        message: "Tenant database not configured",
-      });
-    }
-
-    const history = await atsService.getAnalysisHistory(
-      req.tenantDB,
-      studentId,
-      page,
-      limit
-    );
+    const [items, total] = await Promise.all([
+      ATSAnalysis.find(
+        { studentId, isDeleted: { $ne: true }, status: "complete" },
+        {
+          analysisId: 1,
+          overallScore: 1,
+          grade: 1,
+          originalFileName: 1,
+          updatedResumeUrl: 1,
+          keptCount: 1,
+          createdAt: 1,
+          // Virtual
+          suggestionsCount: { $size: { $ifNull: ["$suggestions", []] } },
+        }
+      )
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      ATSAnalysis.countDocuments({
+        studentId,
+        isDeleted: { $ne: true },
+        status: "complete",
+      }),
+    ]);
 
     // Refresh SAS URLs for updated resumes (they expire)
     const itemsWithFreshUrls = await Promise.all(
-      history.items.map(async (item) => {
+      items.map(async (item) => {
         if (item.updatedBlobName) {
-          try {
-            const freshUrl = await azureBlobService.refreshSasUrl(item.updatedBlobName);
-            return { ...item, updatedResumeUrl: freshUrl };
-          } catch (err) {
-            console.warn(`Failed to refresh SAS URL for ${item.updatedBlobName}:`, err.message);
-            return item;
-          }
+          const freshUrl = await azureBlobService.refreshSasUrl(item.updatedBlobName);
+          return { ...item, updatedResumeUrl: freshUrl };
         }
         return item;
       })
@@ -403,12 +433,7 @@ const getHistory = async (req, res) => {
     return res.status(200).json({
       success: true,
       data: itemsWithFreshUrls,
-      pagination: {
-        page: history.page,
-        limit: history.limit,
-        total: history.total,
-        totalPages: history.pages,
-      },
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   } catch (error) {
     console.error("[ATSController.getHistory] Error:", error);
@@ -432,36 +457,30 @@ const getAnalysisById = async (req, res) => {
       return res.status(400).json({ success: false, message: analysisIdError });
     }
 
-    // Ensure tenant DB is available
-    if (!req.tenantDB) {
-      return res.status(500).json({
+    const doc = await ATSAnalysis.findOne({
+      analysisId,
+      isDeleted: { $ne: true },
+    }).lean();
+
+    if (!doc) {
+      return res.status(404).json({
         success: false,
-        message: "Tenant database not configured",
+        message: "Analysis not found or has expired.",
       });
     }
-
-    const doc = await atsService.getAnalysisById(req.tenantDB, analysisId);
 
     // Refresh SAS URLs before returning
     let freshOriginalUrl = doc.originalFileUrl;
     let freshUpdatedUrl = doc.updatedResumeUrl;
 
     if (doc.originalBlobName) {
-      try {
-        freshOriginalUrl = await azureBlobService.refreshSasUrl(doc.originalBlobName);
-      } catch (err) {
-        console.warn(`Failed to refresh original file URL:`, err.message);
-      }
+      freshOriginalUrl = await azureBlobService.refreshSasUrl(doc.originalBlobName);
     }
     if (doc.updatedBlobName) {
-      try {
-        freshUpdatedUrl = await azureBlobService.refreshSasUrl(doc.updatedBlobName);
-      } catch (err) {
-        console.warn(`Failed to refresh updated resume URL:`, err.message);
-      }
+      freshUpdatedUrl = await azureBlobService.refreshSasUrl(doc.updatedBlobName);
     }
 
-    // Convert Map decisions back to plain object for JSON serialization (if applicable)
+    // Convert Map decisions back to plain object for JSON serialization
     const decisions = doc.decisions instanceof Map
       ? Object.fromEntries(doc.decisions)
       : doc.decisions || {};
@@ -488,7 +507,7 @@ const getAnalysisById = async (req, res) => {
 // ── POST /ats/feedback ────────────────────────────────────────────────────
 /**
  * Submit structured feedback for an ATS analysis.
- * Stores feedback in ats_feedback collection for product improvement analytics.
+ * Stores feedback in ATSFeedback collection for product improvement analytics.
  */
 const submitFeedback = async (req, res) => {
   try {
@@ -499,14 +518,6 @@ const submitFeedback = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Rating is required and must be between 1 and 5.",
-      });
-    }
-
-    // Ensure tenant DB is available
-    if (!req.tenantDB) {
-      return res.status(500).json({
-        success: false,
-        message: "Tenant database not configured",
       });
     }
 
@@ -522,9 +533,9 @@ const submitFeedback = async (req, res) => {
     const cleanComment = (additionalComment || "").slice(0, 500).trim();
 
     // ── Save feedback ──────────────────────────────────────────────────────
-    const feedback = await atsService.saveFeedback(req.tenantDB, {
-      analysisId: analysisId || null,
+    const feedback = await ATSFeedback.create({
       studentId: cleanStudentId,
+      analysisId: analysisId || null,
       rating,
       selectedOptions: {
         accuracy: Array.isArray(selectedOptions?.accuracy) ? selectedOptions.accuracy.slice(0, 10) : [],

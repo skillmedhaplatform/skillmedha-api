@@ -269,6 +269,8 @@ function connectTodb(db) {
       subtopics:               db.collection('subtopics'),
       practiceQuestions:       db.collection('practiceQuestions'),
       pracSessions:            db.collection('PracticeSessions'),
+      cart:                    db.collection('cart'),
+wishlist:                db.collection('wishlist'),
     };
   } catch (error) {
     console.error('[DB] connectTodb error:', error);

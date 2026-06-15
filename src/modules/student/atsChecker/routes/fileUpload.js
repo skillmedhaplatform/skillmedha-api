@@ -15,12 +15,12 @@
 
 const express = require("express");
 const router = express.Router();
-const { uploadResume, deleteResume } = require("../../controllers/fileUploadController");
+const { uploadResume, deleteResume } = require("../controllers/fileUploadController");
 const {
   uploadResumeSingle,
   validateFilePresence,
   validateFileSize,
-} = require("../../middleware/s3FileUpload");
+} = require("../middleware/s3FileUpload");
 
 // ── Routes ────────────────────────────────────────────────────────────────
 

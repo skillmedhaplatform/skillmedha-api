@@ -4,7 +4,7 @@
  *
  * Mount this router in your main Express app:
  *   const atsRouter = require("./routes/ats");
- *   app.use("/ats", authMiddleware, selectTenantDB, atsRouter);
+ *   app.use("/ats", authMiddleware, atsRouter);
  *
  * Full endpoint URLs (assuming mounted at /ats):
  *   POST   /ats/analyze                         - Upload & analyze resume
@@ -12,12 +12,12 @@
  *   GET    /ats/history/:studentId               - Get student's analysis history
  *   GET    /ats/analysis/:analysisId             - Get full analysis by ID
  *   POST   /ats/feedback                         - Submit feedback
+ *
+ * Place this file in your Node.js/Express API repo under: routes/ats.js
  */
 
 const express = require("express");
 const router = express.Router();
-const { mandatory,optional } = require("../../../../shared/middleware/auth.middleware");
-const { selectTenantDB } = require("../../../../shared/middleware/selectTenantDB.middleware");
 const {
   analyzeResume,
   generateUpdatedResume,
@@ -25,11 +25,11 @@ const {
   getAnalysisById,
   submitFeedback,
   analyzeExistingResume,
-} = require("../../controllers/atsController");
+} = require("../controllers/atsController");
 const {
   uploadResumeSingle,
   validateFilePresence,
-} = require("../../middleware/atsFileUpload");
+} = require("../middleware/atsFileUpload");
 
 // ── Rate limiting (optional but recommended) ──────────────────────────────
 // CONFIGURE: Uncomment and configure if express-rate-limit is available in your project
@@ -54,27 +54,27 @@ const {
  * Analyze an already uploaded resume by providing blob name.
  * Body: { blobName: string, studentId: string, jobDescription?: string, resumeId?: string, fileUrl?: string }
  */
-router.post("/analyze-existing", optional, selectTenantDB, analyzeExistingResume);
+router.post("/analyze-existing", analyzeExistingResume);
 
 /**
  * POST /ats/generate-updated-resume
  * Generate updated resume applying the student's kept suggestions.
  * Body: { analysisId: string, decisions: { [suggestionId]: "keep" | "abort" } }
  */
-router.post("/generate-updated-resume", optional, selectTenantDB, generateUpdatedResume);
+router.post("/generate-updated-resume", generateUpdatedResume);
 
 /**
  * GET /ats/history/:studentId
  * Get paginated analysis history for a student.
  * Query params: page (default 1), limit (default 20, max 50)
  */
-router.get("/history/:studentId", optional, selectTenantDB, getHistory);
+router.get("/history/:studentId", getHistory);
 
 /**
  * GET /ats/analysis/:analysisId
  * Get full analysis details by analysis ID.
  */
-router.get("/analysis/:analysisId", optional, selectTenantDB, getAnalysisById);
+router.get("/analysis/:analysisId", getAnalysisById);
 
 /**
  * POST /ats/feedback
@@ -83,8 +83,6 @@ router.get("/analysis/:analysisId", optional, selectTenantDB, getAnalysisById);
  */
 router.post(
   "/feedback",
-  optional,
-  selectTenantDB,
   // feedbackLimiter,       // CONFIGURE: Uncomment to enable rate limiting
   submitFeedback
 );

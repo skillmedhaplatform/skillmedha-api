@@ -49,20 +49,84 @@ function sanitizeName(name) {
   return cleaned;
 }
 
+// app.post("/login", async (req, res) => {
+//   try {
+//     const { email, password, type } = req.body;
+//     const findUser = await mainDBusers.findOne({
+//       $and: [{ email: email.toLowerCase() }, { type }],
+//     });
+
+//     if (!findUser?._id) throw new Error("User not registered");
+//     if (!findUser?.active)
+//       throw new Error("Account Deactivated Please contact site adminstrator");
+//     const storedPassword = findUser.password;
+
+//     const compare = await bcrypt.compare(password, storedPassword);
+//     if (!compare) throw new Error("password incorrect");
+
+//     const loginData = {
+//       userID: findUser._id,
+//       email: findUser.email,
+//       userName: findUser.userName,
+//       role: findUser.role || "",
+//       orgId: findUser.orgId,
+//     };
+
+//     const token = jwt.sign(loginData, process.env.JWT_SECRET);
+
+//     await mainDBusers.updateOne(
+//       { _id: findUser._id },
+//       { $set: { token: token } }
+//     );
+
+//     res
+//       .status(200)
+//       .send({ msg: "loggedin successfully", ...loginData, token: token });
+//   } catch (error) {
+//     res.status(500).json({ err: error.message });
+//   }
+// });
 app.post("/login", async (req, res) => {
   try {
     const { email, password, type } = req.body;
+
     const findUser = await mainDBusers.findOne({
       $and: [{ email: email.toLowerCase() }, { type }],
     });
 
     if (!findUser?._id) throw new Error("User not registered");
     if (!findUser?.active)
-      throw new Error("Account Deactivated Please contact site adminstrator");
-    const storedPassword = findUser.password;
+      throw new Error("Account Deactivated Please contact site administrator");
 
-    const compare = await bcrypt.compare(password, storedPassword);
+    const compare = await bcrypt.compare(password, findUser.password);
     if (!compare) throw new Error("password incorrect");
+
+    // ===== LOGIN STREAK LOGIC =====
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let loginStreak = findUser.loginStreak || 0;
+    let longestStreak = findUser.longestStreak || 0;
+
+    if (findUser.lastLoginDate) {
+      const lastLogin = new Date(findUser.lastLoginDate);
+      lastLogin.setHours(0, 0, 0, 0);
+
+      const diffDays = Math.floor(
+        (today - lastLogin) / (1000 * 60 * 60 * 24)
+      );
+
+      if (diffDays === 1) {
+        loginStreak += 1; // consecutive login
+      } else if (diffDays > 1) {
+        loginStreak = 1; // streak broken
+      }
+      // diffDays === 0 => same day login, don't increase
+    } else {
+      loginStreak = 1; // first login
+    }
+
+    longestStreak = Math.max(longestStreak, loginStreak);
 
     const loginData = {
       userID: findUser._id,
@@ -70,23 +134,33 @@ app.post("/login", async (req, res) => {
       userName: findUser.userName,
       role: findUser.role || "",
       orgId: findUser.orgId,
+      loginStreak,
     };
 
     const token = jwt.sign(loginData, process.env.JWT_SECRET);
 
     await mainDBusers.updateOne(
       { _id: findUser._id },
-      { $set: { token: token } }
+      {
+        $set: {
+          token,
+          lastLoginDate: new Date(),
+          loginStreak,
+          longestStreak,
+        },
+      }
     );
+    console.log(loginData);
 
-    res
-      .status(200)
-      .send({ msg: "loggedin successfully", ...loginData, token: token });
+    res.status(200).send({
+      msg: "loggedin successfully",
+      ...loginData,
+      token,
+    });
   } catch (error) {
     res.status(500).json({ err: error.message });
   }
 });
-
 app.post("/regiterMainDBUser", async (req, res) => {
   try {
     const { email, password, userName, orgId, type } = req.body;
