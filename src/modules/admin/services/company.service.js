@@ -123,7 +123,7 @@ module.exports.loginCompany = async (req, res) => {
 };
 
 module.exports.getCompany = async (req, res) => {
-  const { company } = connectTodb(req.tenantDB);
+  const { company, users } = connectTodb(req.tenantDB);
   if (!req.tenantDB)
     return res.status(500).json({ error: "No tenant DB available" });
   try {
@@ -132,11 +132,18 @@ module.exports.getCompany = async (req, res) => {
     }
     const { userID } = req;
 
-    const findUser = await company.findOne({
+    let findUser = await company.findOne({
       globalId: userID,
     });
 
-    if (!findUser) throw new Error("Company not registered");
+    if (!findUser) {
+      findUser = await users.findOne({
+        globalId: userID,
+      });
+    }
+
+    if (!findUser) return res.status(401).json({ err: "Company not registered" });
+    
     res.status(200).json({ data: findUser });
   } catch (error) {
     res.status(500).json({ err: error.message });
@@ -144,7 +151,7 @@ module.exports.getCompany = async (req, res) => {
 };
 
 module.exports.updateCompany = async (req, res) => {
-  const { company } = connectTodb(req.tenantDB);
+  const { company, users } = connectTodb(req.tenantDB);
   if (!req.tenantDB)
     return res.status(500).json({ error: "No tenant DB available" });
   try {
@@ -153,13 +160,21 @@ module.exports.updateCompany = async (req, res) => {
     }
     const { userID } = req;
 
-    const findUser = await company.findOne({
+    let findUser = await company.findOne({
       globalId: userID,
     });
+    let targetCollection = company;
 
-    if (!findUser) throw new Error("Company not registered");
+    if (!findUser) {
+      findUser = await users.findOne({
+        globalId: userID,
+      });
+      targetCollection = users;
+    }
 
-    const updateUser = await company.updateOne(
+    if (!findUser) return res.status(404).json({ err: "Company not registered" });
+
+    const updateUser = await targetCollection.updateOne(
       {
         _id: findUser._id,
       },

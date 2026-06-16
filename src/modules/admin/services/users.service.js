@@ -52,17 +52,22 @@ function sanitizeName(name) {
 app.post("/login", async (req, res) => {
   try {
     const { email, password, type } = req.body;
+
+    if (!email || !password || !type) {
+      return res.status(400).json({ err: "Email, password, and type must be provided" });
+    }
+
     const findUser = await mainDBusers.findOne({
       $and: [{ email: email.toLowerCase() }, { type }],
     });
 
-    if (!findUser?._id) throw new Error("User not registered");
+    if (!findUser?._id) return res.status(401).json({ err: "User not registered" });
     if (!findUser?.active)
-      throw new Error("Account Deactivated Please contact site adminstrator");
+      return res.status(403).json({ err: "Account Deactivated Please contact site adminstrator" });
     const storedPassword = findUser.password;
 
     const compare = await bcrypt.compare(password, storedPassword);
-    if (!compare) throw new Error("password incorrect");
+    if (!compare) return res.status(401).json({ err: "password incorrect" });
 
     const loginData = {
       userID: findUser._id,
@@ -70,6 +75,7 @@ app.post("/login", async (req, res) => {
       userName: findUser.userName,
       role: findUser.role || "",
       orgId: findUser.orgId,
+      type: findUser.type,
     };
 
     const token = jwt.sign(loginData, process.env.JWT_SECRET);
@@ -208,15 +214,20 @@ app.post(
   async (req, res) => {
     try {
       const { email, password } = req.body;
+
+      if (!email || !password) {
+        return res.status(400).json({ err: "Email and password must be provided" });
+      }
+
       const findUser = await organisation.findOne({ email: email });
 
-      if (!findUser?._id) throw new Error("Organisation not registered");
+      if (!findUser?._id) return res.status(401).json({ err: "Organisation not registered" });
       if (!findUser?.active)
-        throw new Error("Account Deactivated Please contact site adminstrator");
+        return res.status(403).json({ err: "Account Deactivated Please contact site adminstrator" });
       const storedPassword = findUser.password;
 
       const compare = await bcrypt.compare(password, storedPassword);
-      if (!compare) throw new Error("password incorrect");
+      if (!compare) return res.status(401).json({ err: "password incorrect" });
 
       const loginData = {
         userID: findUser._id,

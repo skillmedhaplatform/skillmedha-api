@@ -40,6 +40,7 @@ router.post('/deleteResume', mandatory, selectTenantDB, resumeSvc.deleteResume |
 
 // ─── Placements / Jobs (student-facing) ──────────────────────────────────────
 router.get('/getAllJobs',                      mandatory, selectTenantDB, placementsSvc.getAllJobs);
+router.get('/getJobDashboardStats',            mandatory, selectTenantDB, placementsSvc.getJobDashboardStats);
 router.get('/applyJob',                        mandatory, selectTenantDB, placementsSvc.applyJob);
 router.get('/setJobStatus',                    mandatory, selectTenantDB, placementsSvc.setJobStatus);
 router.post('/getOneJob/:jobId',              mandatory, selectTenantDB, placementsSvc.getOneJob);

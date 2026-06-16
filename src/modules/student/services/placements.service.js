@@ -646,6 +646,10 @@ module.exports.getOneJob = async (req, res) => {
     const { jobId } = req.params;
     const { orgId } = req;
 
+    if (jobId === "Newjob") {
+      return res.status(200).json({ data: {} });
+    }
+
     let findJob = null;
     let isAssignedJob = false;
 
@@ -4002,5 +4006,32 @@ module.exports.updateQuestion = async (req, res) => {
   } catch (error) {
     console.error("updateQuestion error:", error);
     return res.status(500).json({ err: error.message });
+  }
+};
+module.exports.getJobDashboardStats = async (req, res) => {
+  const { job } = connectTodb(req.tenantDB);
+  if (!req.tenantDB) return res.status(500).json({ error: "No tenant DB available" });
+
+  try {
+    const activeCount = await job.countDocuments({ status: "active" });
+    const expiredCount = await job.countDocuments({ status: "expired" });
+    const pendingCount = await job.countDocuments({ status: "pending" });
+
+    const applicantsAggregation = await job.aggregate([
+      { $match: { applicants: { $exists: true, $type: 'array' } } },
+      { $project: { numApplicants: { $size: "$applicants" } } },
+      { $group: { _id: null, totalApplicants: { $sum: "$numApplicants" } } }
+    ]).toArray();
+
+    const totalApplicants = applicantsAggregation.length > 0 ? applicantsAggregation[0].totalApplicants : 0;
+
+    res.status(200).json({
+      active: activeCount,
+      expired: expiredCount,
+      pending: pendingCount,
+      totalApplicants
+    });
+  } catch (error) {
+    res.status(500).json({ err: error.message });
   }
 };
