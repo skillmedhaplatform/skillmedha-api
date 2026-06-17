@@ -263,7 +263,7 @@ const resolvers = {
 
       return res;
     },
-    blockedStudents: async (parent, _, tenantDB) => {
+    blockedStudents: async (parent, _, { tenantDB }) => {
       if (!parent.blockedStudents) return [];
       const { student } = connectTodb(tenantDB);
       const ids = parent.blockedStudents;
