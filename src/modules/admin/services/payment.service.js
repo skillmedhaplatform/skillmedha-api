@@ -220,8 +220,6 @@ router.post("/payment_links", async (req, res) => {
         Installment: Installment ? Installment : false,
         // policy_name: "Jeevan Bima"
       },
-      // callback_url: "http://localhost:5500/",
-      // callback_method: "get"
     };
 
     const checkStudent = await studentsCollection.findOne({ email: email });
@@ -449,8 +447,9 @@ router.post("/verify", async (req, res) => {
       createdAt: new Date().toLocaleString(),
     });
 
+    const frontendUrl = process.env.FRONTEND_APP_URL || "http://localhost:3000";
     res.redirect(
-      "http://localhost:5501/thankyou.html?paymentId=" + razorpay_payment_id
+      frontendUrl + "/thankyou.html?paymentId=" + razorpay_payment_id
     );
   } else {
     res.status(400).json({

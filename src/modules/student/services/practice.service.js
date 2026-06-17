@@ -226,6 +226,7 @@ module.exports.getSubjectsByType = async (req, res) => {
   }
 };
 
+
 module.exports.createTopic = async (req, res) => {
   const { topics } = connectTodb(req.tenantDB);
   try {
