@@ -4009,13 +4009,14 @@ module.exports.updateQuestion = async (req, res) => {
   }
 };
 module.exports.getJobDashboardStats = async (req, res) => {
-  const { job } = connectTodb(req.tenantDB);
+  const { job, jobAssessments } = connectTodb(req.tenantDB);
   if (!req.tenantDB) return res.status(500).json({ error: "No tenant DB available" });
 
   try {
     const activeCount = await job.countDocuments({ status: "active" });
     const expiredCount = await job.countDocuments({ status: "expired" });
     const pendingCount = await job.countDocuments({ status: "pending" });
+    const assessmentsCount = await jobAssessments.countDocuments();
 
     const applicantsAggregation = await job.aggregate([
       { $match: { applicants: { $exists: true, $type: 'array' } } },
@@ -4029,7 +4030,8 @@ module.exports.getJobDashboardStats = async (req, res) => {
       active: activeCount,
       expired: expiredCount,
       pending: pendingCount,
-      totalApplicants
+      totalApplicants,
+      assessments: assessmentsCount
     });
   } catch (error) {
     res.status(500).json({ err: error.message });
