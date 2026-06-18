@@ -81,6 +81,42 @@ app.use(optional);
 const { getMarqueeNotices } = require('./modules/admin/services/marquee.service');
 app.get('/marquee', getMarqueeNotices);
 
+// ─── Login Page Public Stats (must be before mandatory auth) ─────────────────
+const dashboardService = require('./modules/admin/services/dashboard/dashboardService');
+let cachedStats = null;
+let statsLastFetched = 0;
+
+app.get('/api/public/stats', async (req, res) => {
+  try {
+    const now = Date.now();
+    // Cache for 1 hour (3600000 ms) to avoid heavy DB queries on the login page
+    if (!cachedStats || now - statsLastFetched > 3600000) {
+      const stats = await dashboardService.getDashboardStats();
+      cachedStats = {
+        totalStudents: stats.totalStudents,
+        totalColleges: stats.totalColleges,
+        placementRate: "94%" // Keeping static as it's not in the dashboard stats
+      };
+      statsLastFetched = now;
+    }
+    
+    res.json({
+      success: true,
+      data: cachedStats
+    });
+  } catch (error) {
+    // If DB fails, fallback to static numbers so the login page doesn't break
+    res.json({
+      success: true,
+      data: {
+        totalStudents: 52000,
+        totalColleges: 150,
+        placementRate: "94%"
+      }
+    });
+  }
+});
+
 // ─── Azure Blob upload endpoints ─────────────────────────────────────────────
 function getAudioDurationInSeconds(filePath) {
   try {
@@ -286,11 +322,13 @@ if (redisClient && redisSubscriber) {
   logger.info('[Socket.IO] Redis adapter disabled, running without it');
 }
 
-// Attach socket handler (original socket.js logic, re-imported)
-// const attachSocketHandlers = require('./modules/tpo/services/socket.service');
-// socket.service.js exports the httpServer + io setup — we pass our io instance
-// The original socket.js creates its own httpServer, but we inject ours here
-// by exporting io and using it
+// Attach socket handlers (original socket.js logic)
+const setupSocketService = require('./modules/tpo/services/socket.service');
+const setupJobSocketService = require('./modules/tpo/services/jobSocket.service');
+
+// Mount the legacy socket services onto our unified `io` and `app` instance
+setupSocketService(io, app);
+setupJobSocketService(io, app);
 
 // ─── Server start ─────────────────────────────────────────────────────────────
 async function startServer() {
