@@ -88,12 +88,10 @@ function sanitizeName(name) {
 // });
 app.post("/login", async (req, res) => {
   try {
-    const { email, password, type } = req.body;
-    console.log("[LOGIN DEBUG] Request Body:", { email, type });
+    const { email, password } = req.body;
+    console.log("[LOGIN DEBUG] Request Body:", { email });
 
-    const findUser = await mainDBusers.findOne({
-      $and: [{ email: email.toLowerCase() }, { type }],
-    });
+    const findUser = await mainDBusers.findOne({ email: email.toLowerCase() });
     console.log("[LOGIN DEBUG] Found User:", findUser ? findUser._id : null);
 
     if (!findUser?._id) throw new Error("User not registered");
@@ -135,6 +133,7 @@ app.post("/login", async (req, res) => {
       email: findUser.email,
       userName: findUser.userName,
       role: findUser.role || "",
+      type: findUser.type || "",
       orgId: findUser.orgId,
       loginStreak,
     };

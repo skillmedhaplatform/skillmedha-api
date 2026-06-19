@@ -442,6 +442,45 @@ async function deleteStudentNote(req, res) {
   }
 }
 
+async function getDashboardStats(req, res) {
+  const { student, noticeBoard } = connectTodb(req.tenantDB);
+  const { internshipsCollection } = getGlobalCollections();
+  if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
+  try {
+    const foundStudent = await student.findOne({ globalId: req.userId });
+    if (!foundStudent) return res.status(404).json({ err: 'Student not found' });
+
+    const noticeBoardIds = (foundStudent.noticeboard ?? [])
+      .map(e => new mongoDB.ObjectId(e));
+
+    const [
+      coursesCount,
+      internshipsCount,
+      notificationsCount,
+      recentNotifications,
+    ] = await Promise.all([
+      internshipsCollection.countDocuments({ type: 'course' }),
+      internshipsCollection.countDocuments({ type: 'internship' }),
+      noticeBoardIds.length > 0
+        ? noticeBoard.countDocuments({ _id: { $in: noticeBoardIds } })
+        : Promise.resolve(0),
+      noticeBoardIds.length > 0
+        ? noticeBoard.find({ _id: { $in: noticeBoardIds } })
+            .sort({ createdAt: -1 }).limit(5).toArray()
+        : Promise.resolve([]),
+    ]);
+
+    res.status(200).json({
+      coursesCount,
+      internshipsCount,
+      notificationsCount,
+      recentNotifications,
+    });
+  } catch (error) {
+    res.status(500).json({ err: error.message });
+  }
+}
+
 module.exports = {
   getStudent,
   getAllStudents,
@@ -468,4 +507,5 @@ module.exports = {
   getStudentNotes,
   updateStudentNote,
   deleteStudentNote,
+  getDashboardStats,
 };

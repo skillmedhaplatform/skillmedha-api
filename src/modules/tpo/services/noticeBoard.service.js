@@ -471,6 +471,7 @@ module.exports.getNoticeByStudent = async (req, res) => {
     }
     const notices = await noticeBoard
       .find({ _id: { $in: noticeBoardIds } })
+      .limit(20)
       .toArray();
 
     res.status(200).json({ data: notices });

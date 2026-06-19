@@ -19,6 +19,7 @@ const practiceSvc       = require('./services/practice.service');
 
 // ─── testPortal router (student-facing: progress, assigned tests) ─────────────
 const testPortalRouter  = require('./services/testPortalRouter.service');
+const studentCtrl       = require('./controllers/student.controller');
 
 // ─── Multer config ────────────────────────────────────────────────────────────
 const storage = multer.diskStorage({
@@ -28,7 +29,8 @@ const storage = multer.diskStorage({
 const upload = multer({ storage, fileFilter: (req, file, cb) => cb(null, true) });
 
 const router = Router();
-
+//const atsRouter = require('./routes/atscheckerRoutes/ats');
+//const fileUploadRouter = require('./routes/atscheckerRoutes/fileUpload');
 
 
 // ─── Auth / Profile (student registration, login, profile management) ─────────
@@ -62,6 +64,10 @@ router.post('/savePracResults/:pracId',        mandatory, selectTenantDB, practi
 router.get('/getStudentPracResults/:userId',   mandatory, selectTenantDB, practiceSvc.getStudentPracResults);
 
 
+router.get('/dashboard/stats', mandatory, selectTenantDB, studentCtrl.getDashboardStats);
 
+//router.use('/ats', optional, selectTenantDB, atsRouter);
+
+//router.use('/api', optional, selectTenantDB, fileUploadRouter);
 
 module.exports = router;

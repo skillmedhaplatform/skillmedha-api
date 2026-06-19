@@ -98,6 +98,16 @@ function _initGlobalCollections() {
   const db_resources = client.db('skillmedha_resources');
   const KSquaredb   = client.db('KSquare');
 
+  db.collection('users').createIndex(
+    { email: 1 },
+    { background: true }
+  ).catch(err => console.warn('[DB] Failed to create email index:', err));
+
+  KSquaredb.collection('internships').createIndex(
+    { type: 1 },
+    { background: true }
+  ).catch(err => console.warn('[DB] internships type index:', err));
+
   _globalCollections = {
     mainDBusers:            db.collection('users'),
     organisation:           db.collection('organizations'),
@@ -205,6 +215,12 @@ async function getTenantDB(orgId, retryCount = 0) {
 
     const client = await getSharedMongoClient();
     const db = client.db(orgId);
+
+    db.collection('student').createIndex({ email: 1 }, { background: true })
+      .catch(err => console.warn('[DB] student email index:', err));
+    db.collection('student').createIndex({ globalId: 1 }, { background: true })
+      .catch(err => console.warn('[DB] student globalId index:', err));
+
     global.tenantCache.set(orgId, db);
     return db;
   } finally {
@@ -270,7 +286,7 @@ function connectTodb(db) {
       practiceQuestions:       db.collection('practiceQuestions'),
       pracSessions:            db.collection('PracticeSessions'),
       cart:                    db.collection('cart'),
-wishlist:                db.collection('wishlist'),
+      wishlist:                db.collection('wishlist'),
     };
   } catch (error) {
     console.error('[DB] connectTodb error:', error);
