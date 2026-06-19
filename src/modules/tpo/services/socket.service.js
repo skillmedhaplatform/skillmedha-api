@@ -27,10 +27,8 @@ const { connectTodb } = require("../../../shared/db/connection");
 const { mandatory: authenticate } = require("../../../shared/middleware/auth.middleware");
 const { selectTenantDB } = require("../../../shared/middleware/selectTenantDB.middleware");
 
-const app = express();
-const httpServer = createServer(app);
-const io = new Server(httpServer, { cors: "*" });
-const port = 2222;
+// Standalone server creation moved to bottom
+module.exports = function setupSocketService(io, app) {
 
 // ===== Register middleware ONCE, UP FRONT =====
 io.use(async (socket, next) => {
@@ -150,7 +148,7 @@ io.on("connection", (socket) => {
       const questionsDataFetched = await questions.find({ _id: { $in: questionObjectIds } }).toArray();
 
       const { data: testData } = await axios.post(
-        graphqlUrl,
+        graphqlUrl.replace("localhost", "127.0.0.1"),
         {
           query: SingleTestQuery,
           variables: { testId: data?.testId },
@@ -472,6 +470,7 @@ io.on("connection", (socket) => {
         });
       console.log("testEndedtestportal emitted successfully");
     } catch (error) {
+      require('fs').appendFileSync('socket_error.log', new Date().toISOString() + ' testEnded error: ' + error.stack + '\n');
       console.error("testEnded event error:", error);
       socket.emit("error", { message: "Failed to process testEnded event" });
     }
@@ -1764,8 +1763,17 @@ app.get("/active-proctoring-sessions", (req, res) => {
   }
 });
 
-httpServer.listen(port, () =>
-  console.log(`socket server running at port ${port}`),
-);
+};
 
-module.exports = { io, app, httpServer };
+if (require.main === module) {
+  const app = express();
+  const httpServer = createServer(app);
+  const io = new Server(httpServer, { cors: "*" });
+  const port = 2222;
+
+  module.exports(io, app);
+
+  httpServer.listen(port, () =>
+    console.log(`socket server running at port ${port}`)
+  );
+}

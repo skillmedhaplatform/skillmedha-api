@@ -15,15 +15,13 @@ const {
 const { default: axios } = require("axios");
 const { graphqlUrl } = require("./utils/apiUrls");
 const SingleTestQuery = require("./utils/gqlTestQuery");
-const { getTenantDB } = require("../../shared/db/connection");
+const { getTenantDB } = require("../../../shared/db/connection");
 const { organisation, skillsCollection, jobAssessmentProgressCollection } = require("../../../shared/db/connection").getGlobalCollections();
 const jwt = require("jsonwebtoken");
 const { connectTodb } = require("../../../shared/db/connection");
 
-const app = express();
-const httpServer = createServer(app);
-const io = new Server(httpServer, { cors: "*" });
-const port = 8223; // Different port for job assessment socket
+// Standalone server creation moved to bottom
+module.exports = function setupJobSocketService(io, app) {
 
 // ===== Register middleware ONCE, UP FRONT =====
 io.use(async (socket, next) => {
@@ -413,8 +411,17 @@ io.on("connection", (socket) => {
   });
 });
 
-httpServer.listen(port, () =>
-  console.log(`Job Assessment socket server running at port ${port}`)
-);
+};
 
-module.exports = { io, app, httpServer };
+if (require.main === module) {
+  const app = express();
+  const httpServer = createServer(app);
+  const io = new Server(httpServer, { cors: "*" });
+  const port = 8223; // Different port for job assessment socket
+
+  module.exports(io, app);
+
+  httpServer.listen(port, () =>
+    console.log(`Job Assessment socket server running at port ${port}`)
+  );
+}
