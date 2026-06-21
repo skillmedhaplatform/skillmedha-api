@@ -221,27 +221,22 @@ module.exports.createMeeting = async (req, res) => {
 };
 
 module.exports.getMeetingDetails = async (req, res) => {
-  const { orgId } = req.body;
+  const { orgId, topic, id } = req.body;
 
-  // const tenantDB = await getTenantDB(orgId);
-  // const { zoomMeetingsCollection } = connectTodb(tenantDB);
-  // if (!tenantDB)
-  // return res.status(500).json({ error: "No tenant DB available" });
   try {
-    const { topic, id } = req.body;
-
     const findMeeting = await zoomMeetingsCollection.findOne({
-      $and: [{ _id: new ObjectId(id) }],
+      _id: new ObjectId(id),
     });
 
-    if (!findMeeting) throw new Error("Meeting not created for this topic");
+    if (!findMeeting) {
+      return res.status(200).json({ message: "Meeting not created for this topic" });
+    }
 
     res.status(200).json({ data: findMeeting });
   } catch (error) {
     res.status(500).json({ err: error.message });
   }
 };
-
 // module.exports.getAllMeetings = async (req, res) => {
 //   try {
 

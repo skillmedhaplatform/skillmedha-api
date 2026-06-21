@@ -362,48 +362,98 @@ router.get('/getStudentProgress', authenticate, selectTenantDB, async (req, res)
 });
 
 /* POST /saveStudentNotes */
-router.post('/saveStudentNotes', authenticate, async (req, res) => {
+/* POST /saveStudentNotes */
+/* POST /saveStudentNotes */
+router.post('/saveStudentNotes', authenticate, selectTenantDB, async (req, res) => {
+  if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   const { studentNotes } = connectTodb(req.tenantDB);
   try {
-    const note = { ...req.body, studentId: req.userId, createdAt: new Date() };
+    const { courseid, topicid, topicTitle, sectionid, sectionTitle, videoTimestamp, notesdescription } = req.body;
+
+    if (!courseid || !topicid || !notesdescription) {
+      return res.status(400).json({ err: 'courseid, topicid, and notesdescription are required' });
+    }
+
+    const note = {
+      courseid,
+      topicid,
+      topicTitle: topicTitle || '',
+      sectionid: sectionid || '',
+      sectionTitle: sectionTitle || '',
+      videoTimestamp: videoTimestamp || '0:00',
+      notesdescription,
+      studentId: req.userID,
+      createdAt: new Date(),
+    };
+
     const result = await studentNotes.insertOne(note);
-    res.status(200).json({ success: true, data: result });
+    res.status(200).json({ success: true, data: { ...note, _id: result.insertedId } });
   } catch (error) { res.status(500).json({ err: error.message }); }
 });
 
 /* GET /getStudentNotes */
-router.get('/getStudentNotes', authenticate, async (req, res) => {
+router.get('/getStudentNotes', authenticate, selectTenantDB, async (req, res) => {
+  if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   const { studentNotes } = connectTodb(req.tenantDB);
   try {
-    const notes = await studentNotes.find({ studentId: req.userId }).toArray();
-    res.status(200).json({ data: notes });
+    const { courseid, topicid } = req.query;
+
+    const filter = { studentId: req.userID };
+    if (courseid) filter.courseid = courseid;
+    if (topicid) filter.topicid = topicid;
+
+    const notes = await studentNotes.find(filter).sort({ createdAt: -1 }).toArray();
+    res.status(200).json({ success: true, data: notes });
   } catch (error) { res.status(500).json({ err: error.message }); }
 });
 
 /* PUT /updateStudentNote/:noteId */
-router.put('/updateStudentNote/:noteId', authenticate, async (req, res) => {
+router.put('/updateStudentNote/:noteId', authenticate, selectTenantDB, async (req, res) => {
+  if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   const { studentNotes } = connectTodb(req.tenantDB);
   try {
     const { noteId } = req.params;
-    await studentNotes.updateOne({ _id: new mongoDB.ObjectId(noteId) }, { $set: req.body });
+    const { notesdescription } = req.body;
+
+    if (!notesdescription) {
+      return res.status(400).json({ err: 'notesdescription is required' });
+    }
+
+    const result = await studentNotes.updateOne(
+      { _id: new mongoDB.ObjectId(noteId), studentId: req.userID }, // scope to owner
+      { $set: { notesdescription, updatedAt: new Date() } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, message: 'Note not found' });
+    }
+
     res.status(200).json({ success: true });
   } catch (error) { res.status(500).json({ err: error.message }); }
 });
 
 /* DELETE /deleteStudentNote/:noteId */
-router.delete('/deleteStudentNote/:noteId', authenticate, async (req, res) => {
+router.delete('/deleteStudentNote/:noteId', authenticate, selectTenantDB, async (req, res) => {
+  if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   const { studentNotes } = connectTodb(req.tenantDB);
   try {
     const { noteId } = req.params;
-    const archiveResult = await archiveAndDeleteOne(studentNotes, { _id: new mongoDB.ObjectId(noteId) }, {
-      deletedBy: req.userId || req.userID || null,
-      reason: req.body.reason || null,
-    });
+    const archiveResult = await archiveAndDeleteOne(
+      studentNotes,
+      { _id: new mongoDB.ObjectId(noteId), studentId: req.userID }, // scope to owner
+      {
+        deletedBy: req.userID || null,
+        reason: req.body?.reason || null,
+      }
+    );
     if (archiveResult.deletedCount === 0) {
       return res.status(404).json({ success: false, message: 'Note not found' });
     }
     res.status(200).json({ success: true });
   } catch (error) { res.status(500).json({ err: error.message }); }
 });
+
+/* GET /getStudentNotes */
+
 
 module.exports = router;

@@ -31,9 +31,9 @@ router.get('/batches', mandatory, selectTenantDB, ctrl.getBatches);
 router.post('/studentsByIDs', mandatory, selectTenantDB, ctrl.studentsByIDs);
 router.get('/getAllStudentsAgg', mandatory, selectTenantDB, ctrl.getAllStudentsAgg);
 router.get('/getStudentProgress', mandatory, selectTenantDB, ctrl.getStudentProgress);
-router.post('/saveStudentNotes', mandatory, ctrl.saveStudentNotes);
-router.get('/getStudentNotes', mandatory, ctrl.getStudentNotes);
-router.put('/updateStudentNote/:noteId', mandatory, ctrl.updateStudentNote);
-router.delete('/deleteStudentNote/:noteId', mandatory, ctrl.deleteStudentNote);
+router.post('/saveStudentNotes', mandatory, selectTenantDB,ctrl.saveStudentNotes);
+router.get('/getStudentNotes', mandatory, selectTenantDB, ctrl.getStudentNotes);
+router.put('/updateStudentNote/:noteId', mandatory, selectTenantDB, ctrl.updateStudentNote);
+router.delete('/deleteStudentNote/:noteId', mandatory, selectTenantDB, ctrl.deleteStudentNote);
 
 module.exports = router;
