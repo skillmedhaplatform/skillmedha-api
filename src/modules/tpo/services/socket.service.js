@@ -147,18 +147,25 @@ io.on("connection", (socket) => {
       const questionObjectIds = questionIds.map((e) => new mongoDB.ObjectId(e));
       const questionsDataFetched = await questions.find({ _id: { $in: questionObjectIds } }).toArray();
 
-      const { data: testData } = await axios.post(
-        graphqlUrl.replace("localhost", "127.0.0.1"),
-        {
-          query: SingleTestQuery,
-          variables: { testId: data?.testId },
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${socket.token}`,
+      let testData;
+      try {
+        const gqlRes = await axios.post(
+          graphqlUrl.replace("localhost", "127.0.0.1"),
+          {
+            query: SingleTestQuery,
+            variables: { testId: data?.testId },
           },
-        },
-      );
+          {
+            headers: {
+              Authorization: `Bearer ${socket.token}`,
+            },
+          },
+        );
+        testData = gqlRes.data;
+      } catch (err) {
+        console.error("testEnded: Failed to fetch testData via GraphQL:", err.message);
+        return socket.emit("error", { message: "Failed to process test results: unable to fetch test data." });
+      }
 
       const answersArray = questionsDataFetched
         .map((doc) => ({

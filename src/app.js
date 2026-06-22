@@ -93,9 +93,9 @@ app.get('/api/public/stats', async (req, res) => {
     if (!cachedStats || now - statsLastFetched > 3600000) {
       const stats = await dashboardService.getDashboardStats();
       cachedStats = {
-        totalStudents: stats.totalStudents,
-        totalColleges: stats.totalColleges,
-        placementRate: "94%" // Keeping static as it's not in the dashboard stats
+        totalStudents: stats?.totalStudents || 0,
+        totalColleges: stats?.totalColleges || 0,
+        placementRate: "94%" // Static placeholder if not dynamically tracked
       };
       statsLastFetched = now;
     }
@@ -105,14 +105,10 @@ app.get('/api/public/stats', async (req, res) => {
       data: cachedStats
     });
   } catch (error) {
-    // If DB fails, fallback to static numbers so the login page doesn't break
+    // Return graceful error response
     res.json({
-      success: true,
-      data: {
-        totalStudents: 52000,
-        totalColleges: 150,
-        placementRate: "94%"
-      }
+      success: false,
+      message: "Failed to fetch stats"
     });
   }
 });
