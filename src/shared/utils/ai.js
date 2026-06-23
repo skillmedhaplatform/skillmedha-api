@@ -1,155 +1,29 @@
 /**********************************
- *  AI API SERVICE
- *  Updated: No streaming, token logging
+ *  AI ROUTER
+ *  Mounted at /ai in main app.js
  **********************************/
 
-const dotenv = require("dotenv");
-dotenv.config({ path: "../.env" });
 const express = require("express");
-const cors = require("cors");
-const { json } = require("express");
+const router = express.Router();
 const OpenAI = require("openai");
 const mongoDB = require("mongodb");
 
 const { mandatory: authenticate } = require("../middleware/auth.middleware");
 const { selectTenantDB } = require("../middleware/selectTenantDB.middleware");
-const { connectTodb } = require("../db/connection");
-const { getTenantDB } = require("../db/connection");
-const { aiUsageCollection, organisation } = require("../db/connection").getGlobalCollections();
-
-const orgIdEnv = process.env.OPENAI_ORGID;
-const projIdEnv = process.env.OPENAI_PROJID;
-
-const app = express();
-// 1. CORS Configuration - FIRST
-app.use(
-  cors({
-    origin: "*",
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "X-Requested-With",
-      "Accept",
-      "Origin",
-    ],
-  })
-);
-
-// 2. Handle OPTIONS preflight - BEFORE authentication
-app.options("*", (req, res) => {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header(
-    "Access-Control-Allow-Methods",
-    "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-  );
-  res.header(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, X-Requested-With, Accept, Origin"
-  );
-  res.header("Access-Control-Max-Age", "86400"); // 24 hours
-  res.sendStatus(204);
-});
-
-// 3. Body parser
-app.use(json());
-
-// 4. Health check endpoint (no auth required)
-app.get("/health", (req, res) => {
-  res.json({ status: "ok", service: "AI API" });
-});
-
-// 5. Authentication middleware - AFTER OPTIONS handler
-app.use(authenticate);
-
-// 6. Quota limiter
-async function quotaLimiter(req, res, next) {
-  try {
-    const { orgId } = req;
-
-    // 1. KSquare has infinite quota
-    if (orgId === "KSquare") {
-      return next();
-    }
-
-    // 2. Derive ObjectId
-    const parts = orgId.split("_");
-    if (parts.length < 2) {
-      return res.status(400).json({ error: "Invalid orgId format" });
-    }
-
-    const orgObjectId = new mongoDB.ObjectId(parts[1]);
-
-    // 3. Load org document
-    const orgDoc = await organisation.findOne({ _id: orgObjectId });
-
-    // 4. Suspended?
-    if (orgDoc?.suspended) {
-      return res.status(403).json({
-        error: "Organisation suspended due to billing/compliance",
-      });
-    }
-
-    // 5. Extract daily quota (fallback to 50k tokens)
-    const dailyLimit = orgDoc?.aiTokenLimit || 50000;
-
-    // 6. Today window
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-
-    // 7. Aggregate token usage for today
-    const usageAgg = await aiUsageCollection
-      .aggregate([
-        {
-          $match: {
-            orgId,
-            createdAt: { $gte: start },
-          },
-        },
-        {
-          $group: {
-            _id: null,
-            used: { $sum: "$totalTokens" },
-          },
-        },
-      ])
-      .toArray();
-
-    const tokensUsed = usageAgg.length ? usageAgg[0].used : 0;
-
-    // 8. If exceeded
-    if (tokensUsed >= dailyLimit) {
-      return res.status(402).json({
-        error: "Daily AI token quota exceeded.",
-        tokensUsed,
-        dailyLimit,
-      });
-    }
-
-    // 9. Attach usage info to req
-    req.orgQuota = {
-      tokensUsed,
-      dailyLimit,
-      remaining: dailyLimit - tokensUsed,
-    };
-
-    return next();
-  } catch (err) {
-    console.error("quotaLimiter error:", err);
-    return res.status(500).json({
-      error: "Quota check failed",
-      detail: err.message,
-    });
-  }
-}
-
-app.use(quotaLimiter);
+const { connectTodb, getTenantDB } = require("../db/connection");
+const {
+  aiUsageCollection,
+  organisation,
+} = require("../db/connection").getGlobalCollections();
 
 const openai = new OpenAI({
-  organization: orgIdEnv,
-  project: projIdEnv,
+  organization: process.env.OPENAI_ORGID,
+  project: process.env.OPENAI_PROJID,
 });
+
+/*****************************************
+ *  HELPERS
+ *****************************************/
 
 const parseIfJson = (txt) => {
   try {
@@ -160,6 +34,7 @@ const parseIfJson = (txt) => {
 };
 
 /************ AI USAGE HELPERS ************/
+
 const trackAIUsage = async (type, userId, orgId, userType, extra = {}) => {
   try {
     const doc = {
@@ -223,10 +98,98 @@ const updateAIUsageOnFailure = async (usageId, err, status = "failed") => {
   }
 };
 
-/**************************************
- *   GENERAL AI ENDPOINTS (NO STREAM)
- **************************************/
-app.post("/checkCode", authenticate, async (req, res) => {
+/*****************************************
+ *  QUOTA LIMITER MIDDLEWARE
+ *****************************************/
+
+async function quotaLimiter(req, res, next) {
+  try {
+    const { orgId } = req;
+
+    // KSquare has infinite quota
+    if (orgId === "KSquare") {
+      return next();
+    }
+
+    // Derive ObjectId
+    const parts = orgId.split("_");
+    if (parts.length < 2) {
+      return res.status(400).json({ error: "Invalid orgId format" });
+    }
+
+    const orgObjectId = new mongoDB.ObjectId(parts[1]);
+
+    // Load org document
+    const orgDoc = await organisation.findOne({ _id: orgObjectId });
+
+    // Suspended?
+    if (orgDoc?.suspended) {
+      return res.status(403).json({
+        error: "Organisation suspended due to billing/compliance",
+      });
+    }
+
+    // Extract daily quota (fallback to 50k tokens)
+    const dailyLimit = orgDoc?.aiTokenLimit || 50000;
+
+    // Today window
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+
+    // Aggregate token usage for today
+    const usageAgg = await aiUsageCollection
+      .aggregate([
+        {
+          $match: {
+            orgId,
+            createdAt: { $gte: start },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            used: { $sum: "$totalTokens" },
+          },
+        },
+      ])
+      .toArray();
+
+    const tokensUsed = usageAgg.length ? usageAgg[0].used : 0;
+
+    // If exceeded
+    if (tokensUsed >= dailyLimit) {
+      return res.status(402).json({
+        error: "Daily AI token quota exceeded.",
+        tokensUsed,
+        dailyLimit,
+      });
+    }
+
+    // Attach usage info to req
+    req.orgQuota = {
+      tokensUsed,
+      dailyLimit,
+      remaining: dailyLimit - tokensUsed,
+    };
+
+    return next();
+  } catch (err) {
+    console.error("quotaLimiter error:", err);
+    return res.status(500).json({
+      error: "Quota check failed",
+      detail: err.message,
+    });
+  }
+}
+
+// Apply quota limiter to all AI routes
+router.use(quotaLimiter);
+
+/*****************************************
+ *  ROUTES
+ *****************************************/
+
+router.post("/checkCode", authenticate, async (req, res) => {
   const { question, code, userType } = req.body;
   const { userID: userId, orgId } = req;
 
@@ -268,7 +231,7 @@ app.post("/checkCode", authenticate, async (req, res) => {
   }
 });
 
-app.post("/checkEnglishText", authenticate, async (req, res) => {
+router.post("/checkEnglishText", authenticate, async (req, res) => {
   const { text, question, userType } = req.body;
   const { userID: userId, orgId } = req;
 
@@ -320,7 +283,7 @@ app.post("/checkEnglishText", authenticate, async (req, res) => {
   }
 });
 
-app.post("/getExplanationFOrQuestion", authenticate, async (req, res) => {
+router.post("/getExplanationFOrQuestion", authenticate, async (req, res) => {
   const { question, answer, userType } = req.body;
   const { userID: userId, orgId } = req;
 
@@ -361,7 +324,7 @@ app.post("/getExplanationFOrQuestion", authenticate, async (req, res) => {
   }
 });
 
-app.post("/repharseSummary", authenticate, async (req, res) => {
+router.post("/repharseSummary", authenticate, async (req, res) => {
   const { summary, userType } = req.body;
   const { userID: userId, orgId } = req;
 
@@ -393,7 +356,7 @@ app.post("/repharseSummary", authenticate, async (req, res) => {
   }
 });
 
-app.post("/generateTestDescription", authenticate, async (req, res) => {
+router.post("/generateTestDescription", authenticate, async (req, res) => {
   const { title, userType } = req.body;
   const { userID: userId, orgId } = req;
 
@@ -405,6 +368,7 @@ app.post("/generateTestDescription", authenticate, async (req, res) => {
       orgId,
       userType
     );
+
     const prompt = `Generate a neutral 3–5 sentence test description for: "${title}"`;
 
     const completion = await openai.chat.completions.create({
@@ -421,6 +385,7 @@ app.post("/generateTestDescription", authenticate, async (req, res) => {
       completion_tokens,
       total_tokens
     );
+
     res.send({ msg: output });
   } catch (e) {
     await updateAIUsageOnFailure(usageId, e);
@@ -428,7 +393,7 @@ app.post("/generateTestDescription", authenticate, async (req, res) => {
   }
 });
 
-app.post("/testCases", async (req, res) => {
+router.post("/testCases", async (req, res) => {
   try {
     const { question, code } = req.body;
 
@@ -465,7 +430,6 @@ Test Cases:
 ${JSON.stringify(question, null, 2)}
 `;
 
-    // Normal (non-stream) completion
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
@@ -473,20 +437,16 @@ ${JSON.stringify(question, null, 2)}
     });
 
     const raw = completion.choices[0].message.content.trim();
-
-    // Remove ```json if present
     const cleaned = raw
       .replace(/^```json/, "")
       .replace(/^```/, "")
       .replace(/```$/, "")
       .trim();
 
-    // Convert to real JS
     let finalResp;
     try {
       finalResp = JSON.parse(cleaned);
     } catch {
-      // if malformed, return raw string (frontend may handle parser)
       finalResp = cleaned;
     }
 
@@ -496,7 +456,7 @@ ${JSON.stringify(question, null, 2)}
   }
 });
 
-app.post("/generateExp", authenticate, async (req, res) => {
+router.post("/generateExp", authenticate, async (req, res) => {
   const { question, explanation, answer, userType } = req.body;
   const { userID: userId, orgId } = req;
 
@@ -526,7 +486,8 @@ app.post("/generateExp", authenticate, async (req, res) => {
       messages: [
         {
           role: "system",
-          content: "You are a helpful assistant that provides educational explanations in clean, structured HTML.",
+          content:
+            "You are a helpful assistant that provides educational explanations in clean, structured HTML.",
         },
         { role: "user", content: prompt },
       ],
@@ -534,8 +495,6 @@ app.post("/generateExp", authenticate, async (req, res) => {
 
     const { prompt_tokens, completion_tokens, total_tokens } = completion.usage;
     let output = completion.choices[0].message.content.trim();
-
-    // Safety: Remove markdown code fences if AI inadvertently includes them
     output = output.replace(/^```html\s*/i, "").replace(/```\s*$/i, "").trim();
 
     await updateAIUsageOnComplete(
@@ -544,6 +503,7 @@ app.post("/generateExp", authenticate, async (req, res) => {
       completion_tokens,
       total_tokens
     );
+
     res.send(output);
   } catch (e) {
     await updateAIUsageOnFailure(usageId, e);
@@ -551,51 +511,53 @@ app.post("/generateExp", authenticate, async (req, res) => {
   }
 });
 
-/*****************************************
- * ADVANCED: QUESTIONS GENERATION, RESUME
- *****************************************/
+router.post(
+  "/generateQuestionsfromText",
+  authenticate,
+  async (req, res) => {
+    const { noOfQuestion, questionType, textPara, userType } = req.body;
+    const { userID: userId, orgId } = req;
 
-app.post("/generateQuestionsfromText", authenticate, async (req, res) => {
-  const { noOfQuestion, questionType, textPara, userType } = req.body;
-  const { userID: userId, orgId } = req;
+    let usageId;
+    try {
+      usageId = await trackAIUsage(
+        "generateQuestionsfromText",
+        userId,
+        orgId,
+        userType
+      );
 
-  let usageId;
-  try {
-    usageId = await trackAIUsage(
-      "generateQuestionsfromText",
-      userId,
-      orgId,
-      userType
-    );
-
-    const prompt = `
+      const prompt = `
 Generate ${noOfQuestion} ${questionType} questions from text:
 ${textPara}
 Strict JSON output.
 `;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-    });
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+      });
 
-    const output = completion.choices[0].message.content;
-    const { prompt_tokens, completion_tokens, total_tokens } = completion.usage;
-    await updateAIUsageOnComplete(
-      usageId,
-      prompt_tokens,
-      completion_tokens,
-      total_tokens
-    );
+      const output = completion.choices[0].message.content;
+      const { prompt_tokens, completion_tokens, total_tokens } =
+        completion.usage;
 
-    res.send({ data: parseIfJson(output) });
-  } catch (e) {
-    await updateAIUsageOnFailure(usageId, e);
-    res.status(500).send("Error generating questions");
+      await updateAIUsageOnComplete(
+        usageId,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens
+      );
+
+      res.send({ data: parseIfJson(output) });
+    } catch (e) {
+      await updateAIUsageOnFailure(usageId, e);
+      res.status(500).send("Error generating questions");
+    }
   }
-});
+);
 
-app.post("/checkIfCodeIsAiGenerated", authenticate, async (req, res) => {
+router.post("/checkIfCodeIsAiGenerated", authenticate, async (req, res) => {
   const { code, userType } = req.body;
   const { userID: userId, orgId } = req;
 
@@ -635,6 +597,7 @@ Return JSON with fields.
       completion_tokens,
       total_tokens
     );
+
     res.send(parsed);
   } catch (e) {
     await updateAIUsageOnFailure(usageId, e);
@@ -642,7 +605,7 @@ Return JSON with fields.
   }
 });
 
-app.post(
+router.post(
   "/generateSummaryForPsychometricTest",
   authenticate,
   async (req, res) => {
@@ -651,7 +614,7 @@ app.post(
 
     let usageId;
     try {
-      let attemptedData = JSON.parse(attemptedDataString);
+      const attemptedData = JSON.parse(attemptedDataString);
       usageId = await trackAIUsage(
         "generateSummaryForPsychometricTest",
         userId,
@@ -680,6 +643,7 @@ Return JSON { summary: "" }
         completion_tokens,
         total_tokens
       );
+
       res.json(parseIfJson(output));
     } catch (e) {
       await updateAIUsageOnFailure(usageId, e);
@@ -688,7 +652,7 @@ Return JSON { summary: "" }
   }
 );
 
-app.post("/generateNumericalQuestion", authenticate, async (req, res) => {
+router.post("/generateNumericalQuestion", authenticate, async (req, res) => {
   const { question, answer, explanation, userType } = req.body;
   const { userID: userId, orgId } = req;
 
@@ -723,6 +687,7 @@ Return JSON only.
       completion_tokens,
       total_tokens
     );
+
     res.send(parseIfJson(output));
   } catch (e) {
     await updateAIUsageOnFailure(usageId, e);
@@ -730,7 +695,7 @@ Return JSON only.
   }
 });
 
-app.post(
+router.post(
   "/generate-resume-summary",
   authenticate,
   selectTenantDB,
@@ -767,6 +732,7 @@ ${JSON.stringify(resumeData)}
         completion_tokens,
         total_tokens
       );
+
       res.json({ summary: output });
     } catch (e) {
       await updateAIUsageOnFailure(usageId, e);
@@ -775,12 +741,12 @@ ${JSON.stringify(resumeData)}
   }
 );
 
-app.post(
+router.post(
   "/improveResumeWriting",
   authenticate,
   selectTenantDB,
   async (req, res) => {
-    const { text, context, userType } = req.body;
+    const { text, userType } = req.body;
     const { userID: userId, orgId } = req;
 
     let usageId;
@@ -812,6 +778,7 @@ ${text}
         completion_tokens,
         total_tokens
       );
+
       res.json({ improvedText: output });
     } catch (e) {
       await updateAIUsageOnFailure(usageId, e);
@@ -820,11 +787,7 @@ ${text}
   }
 );
 
-/*****************************************
- * ATS EVALUATION (Improved)
- *****************************************/
-
-app.post("/checkAts", authenticate, selectTenantDB, async (req, res) => {
+router.post("/checkAts", authenticate, selectTenantDB, async (req, res) => {
   const { studentId, jobId, userType } = req.body;
   const { userID: userId, orgId } = req;
   let usageId;
@@ -835,8 +798,9 @@ app.post("/checkAts", authenticate, selectTenantDB, async (req, res) => {
       jobId,
     });
 
-    if (!req.tenantDB)
+    if (!req.tenantDB) {
       return res.status(500).json({ error: "No tenant DB available" });
+    }
 
     const localDB = req.tenantDB;
     const { student, job, assignedJob, aiRespAts } = connectTodb(localDB);
@@ -974,9 +938,8 @@ JSON response strict format.
   }
 });
 
-/*****************************
- * SERVER START
- *****************************/
+/*****************************************
+ *  EXPORT
+ *****************************************/
 
-const PORT = process.env.AI_PORT || 7172;
-app.listen(PORT, () => console.log(`AI service running on port ${PORT}`));
+module.exports = router;

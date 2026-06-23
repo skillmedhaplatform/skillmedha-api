@@ -290,13 +290,15 @@ app.use('/api/dashboard', dashboardRoutes);
 
 // ─── Questions route (questions/:id) from placements ─────────────────────────
 const { getQuestionById, updateQuestion } = require('./modules/student/services/placements.service');
+const aiRouter= require('./shared/utils/ai.js');
+
 app.get('/questions/:id', mandatory, selectTenantDB, getQuestionById);
 app.put('/questions/:id', mandatory, selectTenantDB, updateQuestion);
 
 // ─── AI routes ────────────────────────────────────────────────────────────────
 // AI service is a separate microservice running on port 7172 - not included here
 // If needed, proxy requests via nginx or call it directly from client
-// app.use('/ai', aiRouter);
+app.use('/ai', aiRouter);
 
 // ─── Centralised error handler (must be last) ─────────────────────────────────
 app.use(errorMiddleware);
