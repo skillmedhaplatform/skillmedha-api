@@ -364,11 +364,56 @@ router.get('/getAllStudentsAgg', authenticate, selectTenantDB, async (req, res) 
 
 /* GET /partnerColleges */
 router.get('/partnerColleges', async (req, res) => {
-  const { colleges } = getCollections();
+  const { organisation } = getCollections();
   try {
-    const data = await colleges.find({}).toArray();
-    res.status(200).json({ data });
-  } catch (error) { res.status(500).json({ err: error.message }); }
+    const {
+      page = 1,
+      limit = 10,
+      sortBy = "name",
+      sortOrder = "desc",
+    } = req.query;
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+
+    if (pageNum < 1) return res.status(400).json({ error: "Page must be greater than 0" });
+    if (limitNum < 10) return res.status(400).json({ error: "Limit must be at least 10" });
+    if (limitNum > 100) return res.status(400).json({ error: "Limit cannot exceed 100" });
+
+    const skip = (pageNum - 1) * limitNum;
+    const sort = { [sortBy]: sortOrder === "asc" ? 1 : -1 };
+
+    const [partnerColleges, totalCount] = await Promise.all([
+      organisation
+        .find({ type: "college" })
+        .sort(sort)
+        .skip(skip)
+        .limit(limitNum)
+        .toArray(),
+      organisation.countDocuments({ type: "college" }),
+    ]);
+
+    const totalPages = Math.ceil(totalCount / limitNum);
+    const hasNextPage = pageNum < totalPages;
+    const hasPrevPage = pageNum > 1;
+
+    res.status(200).json({
+      success: true,
+      data: partnerColleges,
+      pagination: {
+        currentPage: pageNum,
+        totalPages,
+        totalCount,
+        limit: limitNum,
+        hasNextPage,
+        hasPrevPage,
+        nextPage: hasNextPage ? pageNum + 1 : null,
+        prevPage: hasPrevPage ? pageNum - 1 : null,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 /* GET /getAllStudentsFromAllClgs */

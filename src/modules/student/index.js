@@ -51,7 +51,7 @@ router.post('/getOneJob/:jobId',              mandatory, selectTenantDB, placeme
 router.get('/getAllJobsBasedOnplacements',     mandatory, selectTenantDB, placementsSvc.getAllJobsBasedOnplacements);
 router.get('/getAssignedAssessments',         mandatory, selectTenantDB, placementsSvc.getAssignedAssessments);
 router.get('/getOneAssessmentFromStudent/:assessmentId', mandatory, selectTenantDB, placementsSvc.getOneAssessmentFromStudent);
-router.get('/getJobAssessmentResultsForStudent',         mandatory, selectTenantDB, placementsSvc.getJobAssessmentResultsForStudent);
+router.get('/getJobAssessmentResultsForStudent/:assessmentId/:studentId',         mandatory, selectTenantDB, placementsSvc.getJobAssessmentResultsForStudent);
 
 // ─── Practice (student-facing) ────────────────────────────────────────────────
 router.get('/subjects',                        mandatory, selectTenantDB, practiceSvc.getAllSubjects);

@@ -2923,7 +2923,7 @@ module.exports.getJobAssessmentResultsForStudent = async (req, res) => {
   if (!req.tenantDB)
     return res.status(500).json({ error: "No tenant DB available" });
 
-  const { jobAssessmentProgress, job, assignedJob, student } = connectTodb(
+  const { jobAssessmentProgress, job, assignedJob, student, questions } = connectTodb(
     req.tenantDB
   );
   const { assessmentId, studentId } = req.params;
@@ -2974,11 +2974,7 @@ module.exports.getJobAssessmentResultsForStudent = async (req, res) => {
       ])
       .toArray();
 
-    if (results.length === 0) {
-      return res.status(404).json({
-        error: "No progress found for this student and assessment",
-      });
-    }
+
 
     // ========== STUDENT DETAILS LOGIC (Similar to getAllAppliedStudents) ==========
 
@@ -3051,7 +3047,7 @@ module.exports.getJobAssessmentResultsForStudent = async (req, res) => {
     const questionData = await questions
       .find({
         _id: {
-          $in: results[0]?.assessmentData?.questionIds?.map(
+          $in: (results[0]?.assessmentData?.questionIds || []).map(
             (f) => new ObjectId(f)
           ),
         },
@@ -3844,8 +3840,8 @@ module.exports.getScheduledInterviewsForJob = async (req, res) => {
     }
     if (scheduledInterviews.length === 0) {
       return res
-        .status(404)
-        .json({ error: "No scheduled interviews found for this job" });
+        .status(200)
+        .json({ students: [] });
     }
 
     // Step 3: Find all studentIds (deduplicate)

@@ -56,7 +56,7 @@ router.get('/getOneJobAssessment/:id',          mandatory, selectTenantDB, place
 router.get('/getAllJobAssessment',              mandatory, selectTenantDB, placementsSvc.getAllJobAssessment);
 router.post('/getAllAppliedStudents',            mandatory, selectTenantDB, placementsSvc.getAllAppliedStudents);
 router.get('/getJobAssessmentResultsByAssessmentId', mandatory, selectTenantDB, placementsSvc.getJobAssessmentResultsByAssessmentId);
-router.get('/getAllAppliedStudentsWithAssesmentResults', mandatory, selectTenantDB, placementsSvc.getAllAppliedStudentsWithAssesmentResults);
+router.post('/getAllAppliedStudentsWithAssesmentResults', mandatory, selectTenantDB, placementsSvc.getAllAppliedStudentsWithAssesmentResults);
 router.post('/updateStudentAndJobStatus',       mandatory, selectTenantDB, placementsSvc.updateStudentAndJobStatus);
 router.post('/addAssessmentToStudent',          mandatory, selectTenantDB, placementsSvc.addAssessmentToStudent);
 router.post('/scheduleInterview',               mandatory, selectTenantDB, placementsSvc.scheduleInterview);
