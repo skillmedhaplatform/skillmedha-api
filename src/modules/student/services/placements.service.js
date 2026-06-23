@@ -629,6 +629,9 @@ module.exports.getOneJob = async (req, res) => {
 
   try {
     const { jobId } = req.params;
+    if (jobId === "undefined" || jobId === "null" || !jobId) {
+      return res.status(200).json({ error: "Invalid job ID", data: null });
+    }
     const { orgId } = req;
 
     let findJob = null;
@@ -2408,7 +2411,7 @@ module.exports.getAllAppliedStudents = async (req, res) => {
 
     if (!Array.isArray(studentIds) || studentIds.length === 0) {
       return res
-        .status(400)
+        .status(200)
         .json({ error: "No student IDs provided", data: [] });
     }
 
