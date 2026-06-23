@@ -494,11 +494,13 @@ router.get(
 
       const { companyOrg } = req.query;
       let dbToUse;
-      if (!jobId) {
-        throw new Error("jobId is required");
+      const matchCriteria = { isActive: true };
+      if (jobId && jobId !== "undefined" && jobId !== "null") {
+        matchCriteria.jobId = jobId;
       }
+
       // Use company org DB if specified, otherwise use tenant DB
-      if (companyOrg) {
+      if (companyOrg && companyOrg !== "undefined" && companyOrg !== "null") {
         dbToUse = await getTenantDB(companyOrg);
       } else {
         dbToUse = req.tenantDB;
@@ -510,12 +512,7 @@ router.get(
       // Build aggregation pipeline
       const pipeline = [
         {
-          $match: {
-            isActive: true,
-            jobId: jobId,
-            // Optional: filter by creation date (last 24 hours)
-            // createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
-          },
+          $match: matchCriteria,
         },
         {
           $addFields: {
