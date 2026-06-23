@@ -164,7 +164,13 @@ app.post("/login", async (req, res) => {
 });
 app.post("/regiterMainDBUser", async (req, res) => {
   try {
-    const { email, password, userName, orgId, type } = req.body;
+    let { email, password, userName, orgId, type } = req.body;
+
+    // Map 'skill' alias (sent by Google Form) to the actual special organization ID
+    if (orgId === "skill") {
+      orgId = "skill_68e9fa374c2e0b6f153a3135";
+      req.body.orgId = orgId;
+    }
 
     if (!email || !password || !userName || !orgId)
       throw new Error("Email,password, userName and orgId must be provided");

@@ -265,7 +265,8 @@ async function createStudentAccount(req, res) {
   const { mainDBusers } = getGlobalCollections();
   if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   try {
-    const { email, password, userName, type } = req.body;
+    require('fs').appendFileSync('create_student_log.txt', "CREATE STUDENT ACCOUNT BODY: " + JSON.stringify(req.body) + "\n");
+    const { email, password, userName, type, ...rest } = req.body;
     const findStudent = await student.findOne({ $or: [{ email }, { userName }] });
     if (findStudent) throw new Error('Student with this mail or phone or userName is already registered');
     const salt = await bcrypt.genSalt();
@@ -274,9 +275,18 @@ async function createStudentAccount(req, res) {
     const globalStudent = await mainDBusers.findOne({ email });
     const globalId = globalStudent ? globalStudent._id.toString() : null;
     const result = await student.insertOne({
+      ...rest,
       email, password: hash, userName, type: type || 'student',
       enrollementId: enrollmentId, globalId, active: true,
     });
+
+    if (rest.department) {
+      await departments.updateOne(
+        { _id: new mongoDB.ObjectId(rest.department) },
+        { $push: { students: result.insertedId.toString() } }
+      );
+    }
+
     res.status(200).json({ success: true, data: result });
   } catch (error) {
     res.status(500).json({ err: error.message });
