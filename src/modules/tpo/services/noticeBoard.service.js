@@ -464,14 +464,43 @@ module.exports.getNoticeByStudent = async (req, res) => {
 
     const noticeBoardIds = foundStudent.noticeboard?.map((e) => {
       return new ObjectId(e);
-    });
+    }) || [];
 
-    if (!noticeBoardIds || noticeBoardIds.length === 0) {
-      return res.status(200).json([]);
+    const orConditions = [
+      { "targetGroup.code": "STU_ALL" },
+      { "targetGroup": { $exists: false } } // For older notices without targetGroup
+    ];
+
+    if (noticeBoardIds.length > 0) {
+      orConditions.push({ _id: { $in: noticeBoardIds } });
     }
+
+    if (foundStudent.yearOfPassing) {
+      orConditions.push({ 
+        "targetGroup.code": "STU_BATCH", 
+        "targetGroup.batchYear": foundStudent.yearOfPassing.toString() 
+      });
+    }
+
+    if (foundStudent.department) {
+      const deptIdStr = foundStudent.department.toString();
+      orConditions.push({ 
+        "targetGroup.code": "STU_DEPT", 
+        "targetGroup.deptId": deptIdStr 
+      });
+      if (foundStudent.yearOfPassing) {
+        orConditions.push({ 
+          "targetGroup.code": "STU_BATCH_DEPT", 
+          "targetGroup.batchYear": foundStudent.yearOfPassing.toString(),
+          "targetGroup.deptId": deptIdStr 
+        });
+      }
+    }
+
     const notices = await noticeBoard
-      .find({ _id: { $in: noticeBoardIds } })
-      .limit(20)
+      .find({ $or: orConditions })
+      .sort({ createdAt: -1 })
+      .limit(50)
       .toArray();
 
     res.status(200).json({ data: notices });
