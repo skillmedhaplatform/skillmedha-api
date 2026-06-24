@@ -30,7 +30,7 @@ router.get('/getOneDepartmentsWithId/:id',    mandatory, selectTenantDB, departm
 router.get('/getStudentsInDepartments/:departmentId', mandatory, selectTenantDB, departmentsSvc.getStudentsInDepartments);
 router.get('/getStudentsWithoutValidDepartment',      mandatory, selectTenantDB, departmentsSvc.getStudentsWithoutValidDepartment);
 router.get('/getStudentsByOrgAndDepartment',  mandatory, selectTenantDB, departmentsSvc.getStudentsByOrgAndDepartment);
-
+router.post('/bulkUploadStudentsToDepartment/:id', mandatory, selectTenantDB, upload.single('file'), departmentsSvc.bulkUploadStudentsToDepartment);
 // ─── Notice Board ─────────────────────────────────────────────────────────────
 router.post('/createNoticeBoard',              mandatory, selectTenantDB, noticeBoardSvc.createNoticeBoard);
 router.post('/updateNoticeBoard/:id',          mandatory, selectTenantDB, noticeBoardSvc.updateNoticeBoard);
