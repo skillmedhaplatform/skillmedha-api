@@ -99,25 +99,16 @@ router.get('/getAllStudents', authenticate, selectTenantDB, async (req, res) => 
 /* GET /getStudentCreds */
 router.get('/getStudentCreds', authenticate, selectTenantDB, async (req, res) => {
   const { student } = connectTodb(req.tenantDB);
-  const { mainDBusers } = getCollections();
   if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   try {
     const email = req.query.email || req.email;
-    const globalUser = await mainDBusers.findOne({ email });
     let findStudent = await student.findOne({ email });
-    
-    if (!findStudent && !globalUser) throw new Error('Student not found');
-    
-    const responseData = findStudent || globalUser;
-    
-    res.status(200).json({ 
-      data: { 
-        ...responseData, 
-        verified: globalUser ? globalUser.active : false,
-        active: globalUser ? globalUser.active : false,
-        orgDetails: { orgId: req.orgId } 
-      } 
-    });
+    if (!findStudent) {
+      const { mainDBusers } = getCollections();
+      findStudent = await mainDBusers.findOne({ email });
+    }
+    if (!findStudent) throw new Error('Student not found');
+    res.status(200).json({ data: { ...findStudent, orgDetails: { orgId: req.orgId } } });
   } catch (error) { res.status(500).json({ err: error.message }); }
 });
 
@@ -210,20 +201,11 @@ router.post('/registerStudent', async (req, res) => {
 router.get('/verify', async (req, res) => {
   const { mainDBusers } = getCollections();
   try {
-    const { token, orgId } = req.query;
+    const { token } = req.query;
     const bytes = CryptoJS.AES.decrypt(token, secretToken);
     const decoded = JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
     if (!decoded.email) throw new Error('Invalid token');
-    
     await mainDBusers.updateOne({ email: decoded.email }, { $set: { active: true, verificationToken: null } });
-
-    if (decoded.orgId || orgId) {
-      const targetOrgId = decoded.orgId || orgId;
-      const tenantDB = await getTenantDB(targetOrgId);
-      const { student } = connectTodb(tenantDB);
-      await student.updateOne({ email: decoded.email }, { $set: { verified: true, active: true } });
-    }
-
     res.status(200).json({ success: true, message: 'Email verified successfully' });
   } catch (error) { res.status(500).json({ err: error.message }); }
 });
@@ -251,58 +233,8 @@ router.post(['/loginStudent', '/studentLogin'], async (req, res) => {
       config.auth.jwtSecret
     );
     
-    const responseData = tenantStudent || globalUser;
-    responseData.verified = globalUser.active;
-    responseData.active = globalUser.active;
-
-    res.status(200).json({ success: true, token, data: responseData });
+    res.status(200).json({ success: true, token, data: tenantStudent || globalUser });
   } catch (error) { res.status(500).json({ err: error.message }); }
-});
-
-/* POST /resendVerifyEmail */
-router.post('/resendVerifyEmail', authenticate, selectTenantDB, async (req, res) => {
-  const { student } = connectTodb(req.tenantDB);
-  const { mainDBusers } = getCollections();
-
-  if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
-
-  try {
-    if (!req.isAuth) return res.status(401).json({ error: 'User not authorized' });
-    
-    const findStudent = await student.findOne({ globalId: req.userId });
-    if (!findStudent) return res.status(404).json({ error: 'Student not found' });
-    
-    const globalUser = await mainDBusers.findOne({ email: findStudent.email });
-    if (!globalUser) return res.status(404).json({ error: 'Global student record not found' });
-    
-    if (globalUser.active) {
-      return res.status(400).json({ error: 'Email already verified' });
-    }
-
-    const verificationToken = CryptoJS.AES.encrypt(
-      JSON.stringify({ email: findStudent.email, orgId: req.orgId }),
-      config.auth.cryptoSecret
-    ).toString();
-
-    await mainDBusers.updateOne(
-      { email: findStudent.email },
-      { $set: { verificationToken } }
-    );
-
-    await sendVerificationEmail(
-      {
-        email: findStudent.email,
-        name: findStudent.userName || findStudent.firstName || 'Student',
-        verificationToken,
-        orgId: req.orgId,
-      },
-      config.urls.studentVerify
-    );
-
-    res.status(200).json({ success: true, message: 'Verification email sent successfully', msg: 'Verification email sent successfully' });
-  } catch (error) {
-    res.status(500).json({ err: error.message });
-  }
 });
 
 /* POST /updateStudent */

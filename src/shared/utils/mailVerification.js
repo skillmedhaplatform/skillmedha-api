@@ -125,7 +125,9 @@ function sendVerificationEmail(
 }
 
 
-
+module.exports = {
+  sendVerificationEmail,
+}
 
 
 
@@ -168,9 +170,3 @@ async function sendBulkEmails(mailOptionsArray, transporter, batchSize = 15, wai
     }
     return {successes, failures};
 }
-
-module.exports = {
-  sendVerificationEmail,
-  sendBulkEmails,
-  bulkTransporter,
-};
