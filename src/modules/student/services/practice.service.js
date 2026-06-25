@@ -786,6 +786,8 @@ module.exports.startPractice = async (req, res) => {
 
     const pracData = await pracSessions.insertOne({
       userId: userId,
+      refId: refId,
+      type: type,
       questionsData: data,
       createdAt: new Date().getTime(),
     });
