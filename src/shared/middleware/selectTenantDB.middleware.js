@@ -24,7 +24,7 @@ async function selectTenantDB(req, res, next) {
     next();
   } catch (err) {
     console.error(`[selectTenantDB] Failed for org: ${orgId}`, err);
-    return res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({ error: 'Internal server error', details: err.message, stack: err.stack });
   }
 }
 
