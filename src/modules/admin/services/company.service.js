@@ -123,7 +123,7 @@ module.exports.loginCompany = async (req, res) => {
 };
 
 module.exports.getCompany = async (req, res) => {
-  const { company } = connectTodb(req.tenantDB);
+  const { users } = connectTodb(req.tenantDB);
   if (!req.tenantDB)
     return res.status(500).json({ error: "No tenant DB available" });
   try {
@@ -131,20 +131,30 @@ module.exports.getCompany = async (req, res) => {
       return res.status(401).json({ err: "Company not authorised" });
     }
     const { userID } = req;
+    if (!userID) {
+      return res.status(401).json({ err: "Invalid token: missing userID" });
+    }
+    
+    const { ObjectId } = require('mongodb');
+    const userIdStr = userID.toString();
+    
+    let query = { globalId: userIdStr, type: 'company' };
+    if (ObjectId.isValid(userIdStr)) {
+      query = { $or: [{ globalId: userIdStr }, { _id: new ObjectId(userIdStr) }], type: 'company' };
+    }
 
-    const findUser = await company.findOne({
-      globalId: userID,
-    });
+    const findUser = await users.findOne(query);
 
     if (!findUser) throw new Error("Company not registered");
     res.status(200).json({ data: findUser });
   } catch (error) {
+    console.error('getCompany error:', error);
     res.status(500).json({ err: error.message });
   }
 };
 
 module.exports.updateCompany = async (req, res) => {
-  const { company } = connectTodb(req.tenantDB);
+  const { users } = connectTodb(req.tenantDB);
   if (!req.tenantDB)
     return res.status(500).json({ error: "No tenant DB available" });
   try {
@@ -152,14 +162,19 @@ module.exports.updateCompany = async (req, res) => {
       return res.status(401).json({ err: "Company not authorised" });
     }
     const { userID } = req;
+    const { ObjectId } = require('mongodb');
+    const userIdStr = userID.toString();
+    
+    let query = { globalId: userIdStr, type: 'company' };
+    if (ObjectId.isValid(userIdStr)) {
+      query = { $or: [{ globalId: userIdStr }, { _id: new ObjectId(userIdStr) }], type: 'company' };
+    }
 
-    const findUser = await company.findOne({
-      globalId: userID,
-    });
+    const findUser = await users.findOne(query);
 
     if (!findUser) throw new Error("Company not registered");
 
-    const updateUser = await company.updateOne(
+    const updateUser = await users.updateOne(
       {
         _id: findUser._id,
       },

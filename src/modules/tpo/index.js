@@ -30,7 +30,7 @@ router.get('/getOneDepartmentsWithId/:id',    mandatory, selectTenantDB, departm
 router.get('/getStudentsInDepartments/:departmentId', mandatory, selectTenantDB, departmentsSvc.getStudentsInDepartments);
 router.get('/getStudentsWithoutValidDepartment',      mandatory, selectTenantDB, departmentsSvc.getStudentsWithoutValidDepartment);
 router.get('/getStudentsByOrgAndDepartment',  mandatory, selectTenantDB, departmentsSvc.getStudentsByOrgAndDepartment);
-
+router.post('/bulkUploadStudentsToDepartment/:id', mandatory, selectTenantDB, upload.single('file'), departmentsSvc.bulkUploadStudentsToDepartment);
 // ─── Notice Board ─────────────────────────────────────────────────────────────
 router.post('/createNoticeBoard',              mandatory, selectTenantDB, noticeBoardSvc.createNoticeBoard);
 router.post('/updateNoticeBoard/:id',          mandatory, selectTenantDB, noticeBoardSvc.updateNoticeBoard);
@@ -56,7 +56,7 @@ router.get('/getOneJobAssessment/:id',          mandatory, selectTenantDB, place
 router.get('/getAllJobAssessment',              mandatory, selectTenantDB, placementsSvc.getAllJobAssessment);
 router.post('/getAllAppliedStudents',            mandatory, selectTenantDB, placementsSvc.getAllAppliedStudents);
 router.get('/getJobAssessmentResultsByAssessmentId', mandatory, selectTenantDB, placementsSvc.getJobAssessmentResultsByAssessmentId);
-router.get('/getAllAppliedStudentsWithAssesmentResults', mandatory, selectTenantDB, placementsSvc.getAllAppliedStudentsWithAssesmentResults);
+router.post('/getAllAppliedStudentsWithAssesmentResults', mandatory, selectTenantDB, placementsSvc.getAllAppliedStudentsWithAssesmentResults);
 router.post('/updateStudentAndJobStatus',       mandatory, selectTenantDB, placementsSvc.updateStudentAndJobStatus);
 router.post('/addAssessmentToStudent',          mandatory, selectTenantDB, placementsSvc.addAssessmentToStudent);
 router.post('/scheduleInterview',               mandatory, selectTenantDB, placementsSvc.scheduleInterview);
