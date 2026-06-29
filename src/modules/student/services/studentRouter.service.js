@@ -169,20 +169,17 @@ router.post('/createStudentAccount', authenticate, selectTenantDB, async (req, r
         phone: rest.phone,
         type: type || 'student',
         active: true,
-        orgId: req.orgId,
+        createdAt: new Date().getTime(),
+        orgId: req.orgId
       });
       globalId = globalResult.insertedId.toString();
     }
 
     const result = await student.insertOne({
       ...rest,
-      email: email.toLowerCase(),
-      password: hash,
-      userName,
-      type: type || 'student',
-      enrollementId: enrollmentId,
-      globalId,
-      active: true,
+      email: email.toLowerCase(), password: hash, userName, type: type || 'student',
+      enrollementId: enrollmentId, globalId, active: true,
+      createdAt: new Date().toLocaleString(),
     });
 
     if (rest.department) {

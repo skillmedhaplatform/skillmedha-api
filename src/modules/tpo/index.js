@@ -72,7 +72,7 @@ router.post('/addPsychometricTestResults/:studentId', mandatory, selectTenantDB,
     const { studentId } = req.params;
     const covId = new mongoDB.ObjectId(studentId);
     const result = await student.updateOne(
-      { _id: covId },
+      { $or: [{ _id: covId }, { globalId: studentId }] },
       { $set: { psychometricTestResults: req.body } }
     );
     res.status(200).json({ success: true, data: result });
