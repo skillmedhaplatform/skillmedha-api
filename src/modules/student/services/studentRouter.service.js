@@ -45,7 +45,7 @@ const secretToken = config.auth.cryptoSecret;
 async function generateEnrollmentId(date = new Date(), tenantDB) {
   if (!tenantDB) return 'No tenant DB available';
   const { student } = connectTodb(tenantDB);
-  const year  = date.getFullYear().toString().slice(-2);
+  const year = date.getFullYear().toString().slice(-2);
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const prefix = `${year}${month}`;
   const last = await student
@@ -105,18 +105,18 @@ router.get('/getStudentCreds', authenticate, selectTenantDB, async (req, res) =>
     const email = req.query.email || req.email;
     const globalUser = await mainDBusers.findOne({ email });
     let findStudent = await student.findOne({ email });
-    
+
     if (!findStudent && !globalUser) throw new Error('Student not found');
-    
+
     const responseData = findStudent || globalUser;
-    
-    res.status(200).json({ 
-      data: { 
-        ...responseData, 
+
+    res.status(200).json({
+      data: {
+        ...responseData,
         verified: globalUser ? globalUser.active : false,
         active: globalUser ? globalUser.active : false,
-        orgDetails: { orgId: req.orgId } 
-      } 
+        orgDetails: { orgId: req.orgId }
+      }
     });
   } catch (error) { res.status(500).json({ err: error.message }); }
 });
@@ -135,20 +135,31 @@ router.get('/getSingleStudent/:studentId', authenticate, selectTenantDB, async (
 
 /* POST /createStudentAccount */
 router.post('/createStudentAccount', authenticate, selectTenantDB, async (req, res) => {
+  if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   const { student, departments } = connectTodb(req.tenantDB);
   const { mainDBusers } = getCollections();
-  if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   try {
     const { email, password, userName, type, ...rest } = req.body;
+
     const findStudent = await student.findOne({ $or: [{ email }, { userName }] });
     if (findStudent) throw new Error('Student with this mail or phone or userName is already registered');
+
     const enrollmentId = await generateEnrollmentId(new Date(), req.tenantDB);
     const findGlobalStudent = await mainDBusers.findOne({ email });
     const salt = await bcrypt.genSalt();
     const hash = await bcrypt.hash(password, salt);
-    
-    let globalId = findGlobalStudent ? findGlobalStudent._id.toString() : null;
-    if (!findGlobalStudent) {
+
+    let globalId = null;
+
+    if (findGlobalStudent) {
+      // Already exists — just reactivate
+      globalId = findGlobalStudent._id.toString();
+      await mainDBusers.updateOne(
+        { _id: findGlobalStudent._id },
+        { $set: { active: true } }
+      );
+    } else {
+      // New user — insert into main DB
       const globalResult = await mainDBusers.insertOne({
         email: email.toLowerCase(),
         password: hash,
@@ -170,16 +181,18 @@ router.post('/createStudentAccount', authenticate, selectTenantDB, async (req, r
       enrollementId: enrollmentId, globalId, active: true,
       createdAt: new Date().toLocaleString(),
     });
-    
+
     if (rest.department) {
       await departments.updateOne(
         { _id: new mongoDB.ObjectId(rest.department) },
         { $push: { students: result.insertedId.toString() } }
       );
     }
-    
+
     res.status(200).json({ success: true, data: result });
-  } catch (error) { res.status(500).json({ err: error.message }); }
+  } catch (error) {
+    res.status(500).json({ err: error.message });
+  }
 });
 
 /* POST /registerStudent */
@@ -188,7 +201,7 @@ router.post('/registerStudent', async (req, res) => {
   try {
     const { email, password, firstName, lastName, phone, orgId: bodyOrgId } = req.body;
     let orgIdToUse = req.orgId || bodyOrgId;
-    
+
     // Map 'skill' alias to actual special organization ID
     if (orgIdToUse === "skill") {
       orgIdToUse = "skill_68e9fa374c2e0b6f153a3135";
@@ -216,7 +229,7 @@ router.get('/verify', async (req, res) => {
     const bytes = CryptoJS.AES.decrypt(token, secretToken);
     const decoded = JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
     if (!decoded.email) throw new Error('Invalid token');
-    
+
     await mainDBusers.updateOne({ email: decoded.email }, { $set: { active: true, verificationToken: null } });
 
     if (decoded.orgId || orgId) {
@@ -252,7 +265,7 @@ router.post(['/loginStudent', '/studentLogin'], async (req, res) => {
       { userId: globalUser._id.toString(), email: globalUser.email, orgId: globalUser.orgId, role: 'STUDENT' },
       config.auth.jwtSecret
     );
-    
+
     const responseData = tenantStudent || globalUser;
     responseData.verified = globalUser.active;
     responseData.active = globalUser.active;
@@ -270,13 +283,13 @@ router.post('/resendVerifyEmail', authenticate, selectTenantDB, async (req, res)
 
   try {
     if (!req.isAuth) return res.status(401).json({ error: 'User not authorized' });
-    
+
     const findStudent = await student.findOne({ globalId: req.userId });
     if (!findStudent) return res.status(404).json({ error: 'Student not found' });
-    
+
     const globalUser = await mainDBusers.findOne({ email: findStudent.email });
     if (!globalUser) return res.status(404).json({ error: 'Global student record not found' });
-    
+
     if (globalUser.active) {
       return res.status(400).json({ error: 'Email already verified' });
     }
@@ -337,6 +350,8 @@ router.post('/updateStudentWithId/:studentId', authenticate, selectTenantDB, asy
 
 /* POST /deleteStudent/:userID */
 router.post('/deleteStudent/:userID', authenticate, selectTenantDB, async (req, res) => {
+    const { mainDBusers } = getCollections();
+
   const { student } = connectTodb(req.tenantDB);
   if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   try {
@@ -354,6 +369,12 @@ router.post('/deleteStudent/:userID', authenticate, selectTenantDB, async (req, 
     if (archiveResult.deletedCount === 0) {
       return res.status(404).json({ success: false, message: 'Student not found' });
     }
+    const studentEmail = archiveResult.deletedDocument?.email;
+    if (!studentEmail) throw new Error('Deleted student has no email — cannot update departments or main users');
+    await mainDBusers.updateOne(
+      { email: studentEmail },
+      { $set: { active: false } }
+    );
     res.status(200).json({ success: true, message: 'Student deleted' });
   } catch (error) { res.status(500).json({ err: error.message }); }
 });
@@ -416,7 +437,7 @@ router.post('/studentsByIDs', authenticate, selectTenantDB, async (req, res) => 
   if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   try {
     const { ids } = req.body;
-    const objectIds = ids.map((id) => { try { return new mongoDB.ObjectId(id); } catch(_) { return id; } });
+    const objectIds = ids.map((id) => { try { return new mongoDB.ObjectId(id); } catch (_) { return id; } });
     const students = await student.find({ _id: { $in: objectIds } }).toArray();
     res.status(200).json({ data: students });
   } catch (error) { res.status(500).json({ err: error.message }); }
