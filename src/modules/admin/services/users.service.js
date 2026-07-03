@@ -193,7 +193,7 @@ app.post("/regiterMainDBUser", async (req, res) => {
     });
     switch (type) {
       case "college": {
-        db.collection("tpo").insertOne({
+        await db.collection("tpo").insertOne({
           email: email.toLowerCase(),
           password: hash,
           userName,
@@ -205,7 +205,7 @@ app.post("/regiterMainDBUser", async (req, res) => {
         break;
       }
       case "student": {
-        db.collection("student").insertOne({
+        await db.collection("student").insertOne({
           email: email.toLowerCase(),
           password: hash,
           userName,
@@ -217,7 +217,7 @@ app.post("/regiterMainDBUser", async (req, res) => {
         break;
       }
       case "company": {
-        db.collection("users").insertOne({
+        await db.collection("users").insertOne({
           email: email.toLowerCase(),
           password: hash,
           userName,
@@ -229,7 +229,7 @@ app.post("/regiterMainDBUser", async (req, res) => {
         break;
       }
       case "users": {
-        db.collection("users").insertOne({
+        await db.collection("users").insertOne({
           email: email.toLowerCase(),
           password: hash,
           userName,

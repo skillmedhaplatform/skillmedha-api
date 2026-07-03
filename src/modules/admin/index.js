@@ -124,7 +124,7 @@ router.get('/cms/health', (req, res) => res.status(200).json({ status: 'OK', tim
 
 // ─── Internships (Admin manages: create/update/delete, student-facing: view/apply)
 // Mount entire internships router (it handles auth internally per-route)
-router.use('/', internshipsSvc);
 router.use('/internships', internshipsSvc);
+router.use('/', internshipsSvc);
 
 module.exports = router;
