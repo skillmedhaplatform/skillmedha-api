@@ -89,10 +89,8 @@ function sanitizeName(name) {
 app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    console.log("[LOGIN DEBUG] Request Body:", { email });
 
     const findUser = await mainDBusers.findOne({ email: email.toLowerCase() });
-    console.log("[LOGIN DEBUG] Found User:", findUser ? findUser._id : null);
 
     if (!findUser?._id) throw new Error("User not registered");
     if (!findUser?.active)
@@ -151,7 +149,6 @@ app.post("/login", async (req, res) => {
         },
       }
     );
-    console.log(loginData);
 
     res.status(200).send({
       msg: "loggedin successfully",

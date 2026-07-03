@@ -384,14 +384,11 @@ class DashboardService {
   // ==================== GET DASHBOARD STATS ====================
   async getDashboardStats() {
     try {
-      console.log("\n📊 ========== FETCHING DASHBOARD STATS ==========");
-
       const globalDB = getGlobalDB();
       const kSquareDB = getKSquareDB();
       const resourcesDB = getResourcesDB();
 
       // Count organizations
-      console.log("\n1️⃣ Counting organizations...");
       const totalOrgs = await globalDB
         .collection("organizations")
         .countDocuments();
@@ -405,19 +402,10 @@ class DashboardService {
         .collection("organizations")
         .countDocuments({ active: true });
 
-      console.log(
-        `   Organizations: ${totalOrgs} (Colleges: ${totalColleges}, Companies: ${totalCompanies}, Active: ${activeOrgs})`
-      );
-
       // Count jobs from KSquare DB AND organization-specific DBs
-      console.log("\n2️⃣ Counting jobs...");
       const totalJobsInKSquare = await kSquareDB
         .collection("job")
         .countDocuments();
-      console.log(`   Jobs in KSquare DB: ${totalJobsInKSquare}`);
-
-      // Check if jobs are in individual organization databases (both colleges and companies)
-      console.log("\n   🔍 Checking jobs in organization databases...");
 
       // Get ALL organizations (colleges AND companies)
       const allOrganizations = await globalDB
@@ -449,42 +437,24 @@ class DashboardService {
             // No jobs collection
           }
 
-          if (jobsInThisDB > 0) {
-            console.log(
-              `   ${org.type === "college" ? "📚" : "🏢"} ${
-                org.orgName
-              }: ${jobsInThisDB} jobs`
-            );
-          }
-
           jobsInOrgDBs += jobsInThisDB;
         } catch (error) {
           // Silent fail for organizations without job collections
         }
       }
 
-      console.log(`\n   📊 Jobs Summary:`);
-      console.log(`      Jobs in KSquare DB: ${totalJobsInKSquare}`);
-      console.log(`      Jobs in Organization DBs: ${jobsInOrgDBs}`);
-      console.log(`      Total Jobs: ${totalJobsInKSquare + jobsInOrgDBs}`);
-
       const totalJobs = totalJobsInKSquare + jobsInOrgDBs;
 
       // Count assigned jobs
-      console.log("\n3️⃣ Counting assigned jobs...");
       const totalAssignedJobs = await kSquareDB
         .collection("assignedJob")
         .countDocuments();
-      console.log(`   Assigned Jobs: ${totalAssignedJobs}`);
 
       // Get all college organizations
-      console.log("\n4️⃣ Counting college resources...");
       const colleges = await globalDB
         .collection("organizations")
         .find({ type: "college" })
         .toArray();
-
-      console.log(`   Processing ${colleges.length} colleges...`);
 
       let totalStudents = 0;
       let totalTPOs = 0;
@@ -494,7 +464,6 @@ class DashboardService {
 
       for (const college of colleges) {
         try {
-          console.log(`\n   📚 ${college.orgName} (${college.orgId})`);
           const orgDB = getOrgDB(college.orgId);
 
           const studentCount = await orgDB
@@ -511,10 +480,6 @@ class DashboardService {
             .collection("assignedInternships")
             .countDocuments();
 
-          console.log(
-            `      Students: ${studentCount}, TPOs: ${tpoCount}, Depts: ${departmentCount}, Courses: ${courseCount}, Internships: ${internshipCount}`
-          );
-
           totalStudents += studentCount;
           totalTPOs += tpoCount;
           totalDepartments += departmentCount;
@@ -529,27 +494,19 @@ class DashboardService {
       }
 
       // Get all company organizations to count HRs (ALL users in company DB are HRs)
-      console.log("\n5️⃣ Counting company HRs...");
       const companies = await globalDB
         .collection("organizations")
         .find({ type: "company" })
         .toArray();
 
-      console.log(`   Processing ${companies.length} companies...`);
-
       let totalHRs = 0;
 
       for (const company of companies) {
         try {
-          console.log(`\n   🏢 ${company.orgName} (${company.orgId})`);
           const companyDB = getOrgDB(company.orgId);
 
           // Count ALL users (all users in company DB are HRs)
           const hrCount = await companyDB.collection("users").countDocuments();
-
-          if (hrCount > 0) {
-            console.log(`      HRs (all users): ${hrCount}`);
-          }
 
           totalHRs += hrCount;
         } catch (error) {
@@ -560,10 +517,7 @@ class DashboardService {
         }
       }
 
-      console.log(`\n   Total HRs across all companies: ${totalHRs}`);
-
       // NEW: Count AI Usage Stats
-      console.log("\n6️⃣ Counting AI Usage...");
       let totalAiTokens = 0;
       let totalAiRequests = 0;
       let aiUsageByType = {};
@@ -600,10 +554,6 @@ class DashboardService {
           totalAiTokens += item.totalTokens;
           totalAiRequests += item.requestCount;
         });
-
-        console.log(` Total AI Tokens: ${totalAiTokens}`);
-        console.log(` Total AI Requests: ${totalAiRequests}`);
-        console.log(` AI Usage by Type:`, aiUsageByType);
       } catch (aiError) {
         console.warn(" ⚠️ Could not fetch AI usage stats:", aiError.message);
       }
@@ -628,10 +578,6 @@ class DashboardService {
           byType: aiUsageByType,
         },
       };
-
-      console.log("\n✅ ========== FINAL DASHBOARD STATS ==========");
-      console.log(result);
-      console.log("==============================================\n");
 
       return result;
     } catch (error) {

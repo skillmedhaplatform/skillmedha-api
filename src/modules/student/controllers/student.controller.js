@@ -377,13 +377,139 @@ async function getAllStudentsFromAllClgs(req, res) {
 
 async function getStudentByGlobalIdAndOrgId(req, res) {
   try {
-    const { globalId, orgId } = req.query;
-    const tenantDB = await getTenantDB(orgId);
-    const { student } = connectTodb(tenantDB);
+    const { globalId, sourceOrgId, orgId, includeJobs = false } = req.query;
+    const finalOrgId = orgId || sourceOrgId;
+
+    if (!globalId || !finalOrgId) {
+      return res.status(400).json({
+        success: false,
+        error: "Both globalId and orgId are required",
+      });
+    }
+
+    const tenantDB = await getTenantDB(finalOrgId);
+
+    if (!tenantDB) {
+      return res.status(404).json({
+        success: false,
+        error: "Organization not found or database not available",
+      });
+    }
+
+    const { student, job, assignedJob } = connectTodb(tenantDB);
+    const { organisation } = getGlobalCollections();
+
     const findStudent = await student.findOne({ globalId });
-    res.status(200).json({ data: findStudent });
+
+    if (!findStudent) {
+      return res.status(404).json({
+        success: false,
+        error: "Student not found",
+      });
+    }
+
+    let allJobProfiles = [];
+
+    if (includeJobs === "true" || includeJobs === true) {
+      const appliedJobObjects = Array.isArray(findStudent.appliedJobs)
+        ? findStudent.appliedJobs
+        : [];
+
+      if (appliedJobObjects.length > 0) {
+        const appliedJobIds = appliedJobObjects.map((jobObj) => jobObj.id);
+
+        const objectIds = appliedJobIds
+          .filter((id) => typeof id === "string" && id.match(/^[0-9a-fA-F]{24}$/))
+          .map((id) => new mongoDB.ObjectId(id));
+
+        if (objectIds.length > 0) {
+          const localJobPipeline = [
+            { $match: { _id: { $in: objectIds } } },
+            {
+              $project: {
+                _id: 1, interviewStatusByApplicant: 1, profileName: 1, companyName: 1,
+                jobDescription: 1, requirements: 1, location: 1, salary: 1, jobType: 1,
+                experience: 1, skills: 1, postedDate: 1, applicationDeadline: 1,
+                type: { $literal: "local" },
+              },
+            },
+          ];
+
+          const localJobs = await job.aggregate(localJobPipeline).toArray();
+
+          const localJobsWithStatus = localJobs.map((localJob) => {
+            const appliedJobObj = appliedJobObjects.find((obj) => obj.id === localJob._id.toString());
+            return {
+              ...localJob,
+              applicationStatus: appliedJobObj?.status || "applied",
+              appliedDate: appliedJobObj?.appliedDate || null,
+              isAssignedJob: false,
+            };
+          });
+
+          allJobProfiles = [...allJobProfiles, ...localJobsWithStatus];
+        }
+
+        const assignedJobsFromApplied = appliedJobObjects.filter((jobObj) => jobObj.isAssignedJob);
+
+        if (assignedJobsFromApplied.length > 0) {
+          const assignedJobPromises = assignedJobsFromApplied.map(async (jobObj) => {
+            try {
+              const assignedJobDoc = await assignedJob.findOne({ jobId: jobObj.id });
+              if (assignedJobDoc) {
+                const companyTenantDB = await getTenantDB(assignedJobDoc.companyOrgId);
+                const { job: companyJobCollection } = connectTodb(companyTenantDB);
+                const companyJob = await companyJobCollection.findOne({ _id: new mongoDB.ObjectId(jobObj.id) });
+
+                if (companyJob) {
+                  return {
+                    ...companyJob,
+                    type: "assigned",
+                    companyOrgId: assignedJobDoc.companyOrgId,
+                    applicationStatus: jobObj?.status || "applied",
+                    appliedDate: jobObj?.appliedDate || null,
+                    isAssignedJob: true,
+                  };
+                }
+              }
+            } catch (error) {
+              console.error(`Error fetching assigned job ${jobObj.id}:`, error.message);
+            }
+            return null;
+          });
+
+          const assignedJobs = await Promise.all(assignedJobPromises);
+          const validAssignedJobs = assignedJobs.filter((j) => j !== null);
+          allJobProfiles = [...allJobProfiles, ...validAssignedJobs];
+        }
+      }
+    }
+
+    const organizationDetails = await organisation.findOne({ orgId: finalOrgId });
+
+    const response = {
+      success: true,
+      data: {
+        student: {
+          ...findStudent,
+          appliedJobs: (includeJobs === "true" || includeJobs === true) ? allJobProfiles : findStudent.appliedJobs,
+        },
+        organization: organizationDetails ? {
+          orgId: organizationDetails.orgId,
+          orgName: organizationDetails.orgName,
+          type: organizationDetails.type,
+        } : null,
+      },
+    };
+
+    res.status(200).json(response);
   } catch (error) {
-    res.status(500).json({ err: error.message });
+    console.error("Error fetching student by globalId and sourceOrgId:", error);
+    res.status(500).json({
+      success: false,
+      error: "Internal server error",
+      message: error.message,
+    });
   }
 }
 
