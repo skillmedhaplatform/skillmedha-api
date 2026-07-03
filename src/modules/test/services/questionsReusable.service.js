@@ -119,7 +119,7 @@ async function getAllQuestionsData(props, orgDb) {
 // === Batch Delete Question and Related Entities ===
 async function deleteQuestionsByIds(props, orgDb) {
   try {
-    const { questions, questionTranslations, answers, answerTranslations } =
+    const { questions, questionTranslations, answers, answerTranslations, test } =
       connectTodb(orgDb);
     const { questionIds } = props; // array of string IDs
 
@@ -139,12 +139,13 @@ async function deleteQuestionsByIds(props, orgDb) {
 
     const answerIds = relatedAnswers.map((ans) => ans.id);
 
-    // Delete: questions, questionTranslations, answers, answerTranslations
+    // Delete: questions, questionTranslations, answers, answerTranslations, and pull from tests
     const [
       questionsResult,
       questionTranslationsResult,
       answersResult,
       answerTranslationsResult,
+      testUpdateResult,
     ] = await Promise.all([
       questions.deleteMany({ _id: { $in: objectIds } }),
       questionTranslations.deleteMany({
@@ -154,6 +155,10 @@ async function deleteQuestionsByIds(props, orgDb) {
       answerTranslations.deleteMany({
         solutionId: { $in: answerIds },
       }),
+      test.updateMany(
+        { questions: { $in: [...questionIds, ...objectIds] } },
+        { $pull: { questions: { $in: [...questionIds, ...objectIds] } } }
+      ),
     ]);
 
     return {
@@ -164,6 +169,7 @@ async function deleteQuestionsByIds(props, orgDb) {
         questionTranslations: questionTranslationsResult.deletedCount,
         answers: answersResult.deletedCount,
         answerTranslations: answerTranslationsResult.deletedCount,
+        testsUpdated: testUpdateResult.modifiedCount,
       },
     };
   } catch (error) {

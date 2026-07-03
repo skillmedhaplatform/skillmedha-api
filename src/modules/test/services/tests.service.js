@@ -1354,7 +1354,7 @@ async function removeQuestionFromTest(req, res) {
     if (!findTest?._id) throw new Error("No Test with that title to update");
     const deletedFromTest = await test.updateOne(
       { _id: findTest?._id },
-      { $pull: { questions: questionId } }
+      { $pull: { questions: { $in: [questionId, new mongoDB.ObjectId(questionId)] } } }
     );
     res.send({ msg: "Question removed from test", data: deletedFromTest });
   } catch (error) {
@@ -1364,23 +1364,27 @@ async function removeQuestionFromTest(req, res) {
 
 // 16. DELETE QUESTION
 async function deleteQuestion(req, res) {
+  console.log("DeleteQuestion API called with:", req.body);
   const { questions, test } = connectTodb(req.tenantDB);
   try {
     const { questionId } = req.body;
     const newQuestionId = new mongoDB.ObjectId(questionId);
     const findQuestion = await questions.findOne({ _id: newQuestionId });
+    console.log("Found question:", findQuestion ? findQuestion._id : "Not found");
     if (!findQuestion?._id)
       throw new Error("No Questions to delete with that QuestionId");
     const data = await questions.deleteOne({ _id: findQuestion._id });
+    console.log("Delete result:", data);
     await test.updateMany(
-      { questions: { $elemMatch: { $eq: questionId } } },
-      { $pull: { questions: questionId } }
+      { questions: { $in: [questionId, new mongoDB.ObjectId(questionId)] } },
+      { $pull: { questions: { $in: [questionId, new mongoDB.ObjectId(questionId)] } } }
     );
     res.send({
       msg: "question deleted successfully",
       deletedFromQuestionCollection: data,
     });
   } catch (error) {
+    console.log("Error in deleteQuestion:", error.message);
     res.send({ err: error.message });
   }
 }
