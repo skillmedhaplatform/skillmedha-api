@@ -1596,35 +1596,61 @@ async function saveTestProgress(req, res) {
   const { test, student, randomStudent, progress } = connectTodb(req.tenantDB);
   try {
     const { studentId, testId } = req.body;
-    const newStudentId = new mongoDB.ObjectId(studentId);
-    const newTestId = new mongoDB.ObjectId(testId);
-    const findStudent = await student.findOne({ _id: newStudentId });
-    // const findRandomStudent = await randomStudent.findOne({
-    //   _id: newStudentId,
-    // });
-    const findTest = await test.findOne({ _id: newTestId });
-    if (!findStudent)
-      throw new Error("No student With that id to update progress");
-    if (!findTest) throw new Error("No Test With that id to update progress");
-    const data = await progress.insertOne(req.body);
+
+    let newStudentId = null;
+    let newTestId = null;
+
+    try {
+      newStudentId = new mongoDB.ObjectId(studentId);
+    } catch (_) {}
+
+    try {
+      newTestId = new mongoDB.ObjectId(testId);
+    } catch (_) {}
+
+    const findStudent = newStudentId
+      ? await student.findOne({ _id: newStudentId })
+      : await student.findOne({ _id: studentId })
+        ? await student.findOne({ _id: studentId })
+        : null;
+
+    let findTest = null;
+    if (newTestId) {
+      findTest = await test.findOne({ _id: newTestId });
+    } else {
+      findTest = await test.findOne({ _id: testId }) || await test.findOne({ _id: new mongoDB.ObjectId(testId) }) || null;
+    }
+
+    if (!findStudent) {
+      console.warn("saveTestProgress: student not found", { studentId });
+    }
+
+    if (!findTest) {
+      console.warn("saveTestProgress: test not found", { testId });
+    }
+
+    const payload = {
+      ...req.body,
+      studentId: studentId?.toString(),
+      testId: testId?.toString(),
+      createdAt: req.body?.createdAt || new Date().toISOString(),
+    };
+
+    const data = await progress.insertOne(payload);
+
     if (findStudent?._id) {
       await student.updateOne(
-        { _id: findStudent?._id },
+        { _id: findStudent._id },
         { $push: { progress: data.insertedId.toString() } }
       );
     }
-    // if (findRandomStudent?._id && !findStudent?._id) {
-    //   await randomStudent.updateOne(
-    //     { _id: findRandomStudent?._id },
-    //     { $push: { progress: data.insertedId.toString() } }
-    //   );
-    // }
+
     res.json({
-      msg: `${findTest?.title} test results updated successfully`,
+      msg: findTest?.title ? `${findTest.title} test results updated successfully` : "Test results updated successfully",
       progressId: data.insertedId.toString(),
     });
   } catch (error) {
-    res.send({ err: error.message });
+    res.status(500).send({ err: error.message });
   }
 }
 

@@ -126,8 +126,6 @@ io.on("connection", (socket) => {
   });
 
   socket.on("testEnded", async (data) => {
-    console.log(data, "data recieved");
-
     try {
       const { student, questions, test, progress } = connectTodb(
         socket.tenantDB,
@@ -147,24 +145,38 @@ io.on("connection", (socket) => {
       const questionObjectIds = questionIds.map((e) => new mongoDB.ObjectId(e));
       const questionsDataFetched = await questions.find({ _id: { $in: questionObjectIds } }).toArray();
 
+      const newTestId = (() => {
+        try {
+          return new mongoDB.ObjectId(data?.testId);
+        } catch (err) {
+          return null;
+        }
+      })();
+
       let testData;
-      try {
-        const gqlRes = await axios.post(
-          graphqlUrl.replace("localhost", "127.0.0.1"),
-          {
-            query: SingleTestQuery,
-            variables: { testId: data?.testId },
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${socket.token}`,
+      if (newTestId) {
+        testData = await test.findOne({ _id: newTestId });
+      }
+
+      if (!testData) {
+        try {
+          const gqlRes = await axios.post(
+            graphqlUrl.replace("localhost", "127.0.0.1"),
+            {
+              query: SingleTestQuery,
+              variables: { testId: data?.testId },
             },
-          },
-        );
-        testData = gqlRes.data;
-      } catch (err) {
-        console.error("testEnded: Failed to fetch testData via GraphQL:", err.message);
-        return socket.emit("error", { message: "Failed to process test results: unable to fetch test data." });
+            {
+              headers: {
+                Authorization: `Bearer ${socket.token}`,
+              },
+            },
+          );
+          testData = gqlRes.data?.data?.test || gqlRes.data;
+        } catch (err) {
+          console.error("testEnded: Failed to fetch testData via GraphQL:", err.message);
+          // continue, we'll still save progress if possible
+        }
       }
 
       const answersArray = questionsDataFetched
@@ -442,40 +454,63 @@ io.on("connection", (socket) => {
       data.scoreData.notAnswered = +notAnswered;
       let progData = "";
       try {
-        // const { studentId, testId } = req.body;
-        const newStudentId = new mongoDB.ObjectId(findUser?._id?.toString());
-        const newTestId = new mongoDB.ObjectId(data?.testId);
+        const newStudentId = new mongoDB.ObjectId(findUser._id.toString());
+        const newTestId = (() => {
+          try {
+            return new mongoDB.ObjectId(data?.testId);
+          } catch (err) {
+            return null;
+          }
+        })();
+
         const findStudent = await student.findOne({ _id: newStudentId });
-        const findTest = await test.findOne({ _id: newTestId });
-        if (!findStudent)
-          throw new Error("No student With that id to update progress");
-        if (!findTest)
-          throw new Error("No Test With that id to update progress");
-        progData = await progress.insertOne({
-          ...data,
-          studentId: findUser?._id?.toString(),
-          testId: data?.testId,
-        });
-        console.log("✅ Progress saved to DB with ID:", progData.insertedId.toString());
-        if (findStudent?._id) {
-          await student.updateOne(
-            { _id: findStudent?._id },
-            { $push: { progress: progData.insertedId.toString() } },
-          );
-          console.log("✅ Student progress array updated for:", findStudent._id.toString());
+        if (!findStudent) {
+          throw new Error("No student found to update progress");
         }
+
+        if (newTestId) {
+          const findTest = await test.findOne({ _id: newTestId });
+          if (!findTest) {
+            console.warn(
+              "testEnded: test document not found for testId",
+              data?.testId,
+            );
+          }
+        } else {
+          console.warn("testEnded: invalid testId format", data?.testId);
+        }
+
+        const progressDoc = {
+          ...data,
+          studentId: findUser._id.toString(),
+          testId: data?.testId,
+          createdAt: data?.createdAt || new Date().toISOString(),
+        };
+
+     
+
+        progData = await progress.insertOne(progressDoc);
+        if (!progData?.insertedId) {
+          throw new Error("Progress insert failed to return insertedId");
+        }
+
+        console.log("✅ Progress saved to DB with ID:", progData.insertedId.toString());
+
+        await student.updateOne(
+          { _id: findStudent._id },
+          { $push: { progress: progData.insertedId.toString() } },
+        );
+        console.log("✅ Student progress array updated for:", findStudent._id.toString());
       } catch (error) {
-        console.error("❌ Failed to save progress to DB:", error.message);
+        console.error("❌ Failed to save progress to DB:", error);
       }
 
-      console.log("Emitting testEndedtestportal to:", socket.id, findUser.ConnectedSocketId);
       io.to(socket.id)
         .to(findUser.ConnectedSocketId)
         .emit("testEndedtestportal", {
           ...data,
           progData: progData?.insertedId,
         });
-      console.log("testEndedtestportal emitted successfully");
     } catch (error) {
       require('fs').appendFileSync('socket_error.log', new Date().toISOString() + ' testEnded error: ' + error.stack + '\n');
       console.error("testEnded event error:", error);
