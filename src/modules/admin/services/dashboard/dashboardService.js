@@ -391,13 +391,13 @@ class DashboardService {
       // Count organizations
       const totalOrgs = await globalDB
         .collection("organizations")
-        .countDocuments();
+        .countDocuments({ active: true });
       const totalColleges = await globalDB
         .collection("organizations")
-        .countDocuments({ type: "college" });
+        .countDocuments({ type: "college", active: true });
       const totalCompanies = await globalDB
         .collection("organizations")
-        .countDocuments({ type: "company" });
+        .countDocuments({ type: "company", active: true });
       const activeOrgs = await globalDB
         .collection("organizations")
         .countDocuments({ active: true });
@@ -407,10 +407,9 @@ class DashboardService {
         .collection("job")
         .countDocuments();
 
-      // Get ALL organizations (colleges AND companies)
       const allOrganizations = await globalDB
         .collection("organizations")
-        .find({})
+        .find({ active: true })
         .toArray();
 
       let jobsInOrgDBs = 0;
@@ -453,7 +452,7 @@ class DashboardService {
       // Get all college organizations
       const colleges = await globalDB
         .collection("organizations")
-        .find({ type: "college" })
+        .find({ type: "college", active: true })
         .toArray();
 
       let totalStudents = 0;
@@ -496,7 +495,7 @@ class DashboardService {
       // Get all company organizations to count HRs (ALL users in company DB are HRs)
       const companies = await globalDB
         .collection("organizations")
-        .find({ type: "company" })
+        .find({ type: "company", active: true })
         .toArray();
 
       let totalHRs = 0;
