@@ -232,6 +232,18 @@ module.exports.getMeetingDetails = async (req, res) => {
       return res.status(200).json({ message: "Meeting not created for this topic" });
     }
 
+    try {
+      const token = await getZoomAccessToken();
+      const zoomReq = await axios.get(`https://api.zoom.us/v2/meetings/${findMeeting.meetingDetails.id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      findMeeting.liveStatus = zoomReq.data.status;
+    } catch (err) {
+      console.log("Error fetching live zoom status:", err?.response?.data || err.message);
+      // Fallback if the Zoom API call fails
+      findMeeting.liveStatus = "unknown";
+    }
+
     res.status(200).json({ data: findMeeting });
   } catch (error) {
     res.status(500).json({ err: error.message });
