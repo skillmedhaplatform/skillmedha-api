@@ -398,12 +398,13 @@ io.on("connection", (socket) => {
             correctQues++;
             data.response[e._id].status = "correct";
           } else {
-            if (correctQFlag == undefined) {
+            if (correctQFlag === undefined) {
               notAnswered++;
               data.response[e._id].status = "notanswered";
+            } else {
+              incorrectQues++;
+              data.response[e._id].status = "incorrect";
             }
-            incorrectQues++;
-            data.response[e._id].status = "incorrect";
           }
         } else {
           console.log(123);

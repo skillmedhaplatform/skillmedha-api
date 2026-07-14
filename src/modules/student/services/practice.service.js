@@ -777,18 +777,62 @@ module.exports.startPractice = async (req, res) => {
 
     const covId = new ObjectId(refId);
 
-    const query = {
+    const baseQuery = {
       [type]: covId,
     };
 
-    // Call findInAllTenants with optional limit
-    const data = await findInAllTenants("questions", query, "find", { limit });
+    // 1. Get total number of questions available for this subtopic
+    const totalQuestions = await findInAllTenants("questions", baseQuery, "countDocuments");
+
+    // 2. Fetch past practice sessions to find seen questions
+    const pastSessions = await pracSessions.find({ userId, refId }).toArray();
+    
+    let seenQuestionIds = new Set();
+    pastSessions.forEach(session => {
+      if (session.questionsData && Array.isArray(session.questionsData)) {
+        session.questionsData.forEach(q => {
+          if (q && q._id) seenQuestionIds.add(q._id.toString());
+        });
+      }
+    });
+
+    // If student has seen all available questions (or more, e.g. due to db changes), reset tracking
+    if (seenQuestionIds.size >= totalQuestions && totalQuestions > 0) {
+      seenQuestionIds.clear();
+    }
+
+    const seenIdsArray = Array.from(seenQuestionIds).map(id => new ObjectId(id));
+
+    // 3. Query unseen questions
+    const unseenQuery = {
+      ...baseQuery,
+      _id: { $nin: seenIdsArray }
+    };
+    
+    let finalQuestions = await findInAllTenants("questions", unseenQuery, "find", { limit });
+
+    // 4. Pad with seen questions if unseen < limit
+    if (finalQuestions.length < limit && seenIdsArray.length > 0) {
+      const padCount = limit - finalQuestions.length;
+      const seenQuery = {
+        ...baseQuery,
+        _id: { $in: seenIdsArray }
+      };
+      const seenQuestionsToPad = await findInAllTenants("questions", seenQuery, "find", { limit: padCount });
+      finalQuestions = [...finalQuestions, ...seenQuestionsToPad];
+    }
+
+    // 5. Shuffle final questions array
+    for (let i = finalQuestions.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [finalQuestions[i], finalQuestions[j]] = [finalQuestions[j], finalQuestions[i]];
+    }
 
     const pracData = await pracSessions.insertOne({
       userId: userId,
       refId: refId,
       type: type,
-      questionsData: data,
+      questionsData: finalQuestions,
       createdAt: new Date().getTime(),
     });
 
@@ -804,8 +848,8 @@ module.exports.startPractice = async (req, res) => {
     res.status(200).json({
       msg: "Practice started successfully",
       data: pracData,
-      questionsData: data,
-      count: data.length,
+      questionsData: finalQuestions,
+      count: finalQuestions.length,
     });
   } catch (error) {
     res.status(500).json({ err: error.message });
