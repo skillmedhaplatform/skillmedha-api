@@ -1186,7 +1186,7 @@ module.exports.getAllJobs = async (req, res) => {
     if (isNaN(page) || page < 1) page = 1;
     if (isNaN(limit) || limit < 1) limit = 20;
 
-    console.log("Query params:", { search, filters, page, limit });
+    // console.log("Query params:", { search, filters, page, limit });
 
     // Define searchable fields for the search parameter
     const searchableFields = [
@@ -1277,17 +1277,17 @@ module.exports.getAllJobs = async (req, res) => {
       matchStage[key] = { $regex: filters[key], $options: "i" };
     }
 
-    console.log("MongoDB matchStage:", JSON.stringify(matchStage, null, 2));
+    // console.log("MongoDB matchStage:", JSON.stringify(matchStage, null, 2));
 
     // Get local jobs with MongoDB filtering
     const localJobs = await job.find(matchStage).toArray();
-    console.log("Local jobs found:", localJobs.length);
+    // console.log("Local jobs found:", localJobs.length);
 
     // Get assigned jobs
     let assignedJobs = [];
     try {
       assignedJobs = await assignedJob.find({}).toArray();
-      console.log("Assigned job references found:", assignedJobs.length);
+      // console.log("Assigned job references found:", assignedJobs.length);
     } catch (error) {
       console.warn(
         "assignedJob collection not found or inaccessible:",
@@ -1308,7 +1308,7 @@ module.exports.getAllJobs = async (req, res) => {
         });
 
         if (!jobDetail) {
-          console.log(`Job ${assignedJobDoc.jobId} not found in company DB`);
+          // console.log(`Job ${assignedJobDoc.jobId} not found in company DB`);
           continue;
         }
 
@@ -1316,9 +1316,9 @@ module.exports.getAllJobs = async (req, res) => {
         const searchMatch = matchesSearch(jobDetail);
         const filterMatch = matchesFilters(jobDetail);
 
-        console.log(
-          `Job ${assignedJobDoc.jobId}: searchMatch=${searchMatch}, filterMatch=${filterMatch}`
-        );
+        // console.log(
+        //   `Job ${assignedJobDoc.jobId}: searchMatch=${searchMatch}, filterMatch=${filterMatch}`
+        // );
 
         if (searchMatch && filterMatch) {
           assignedJobDetails.push({
@@ -1335,7 +1335,7 @@ module.exports.getAllJobs = async (req, res) => {
       }
     }
 
-    console.log("Assigned jobs after filtering:", assignedJobDetails.length);
+    // console.log("Assigned jobs after filtering:", assignedJobDetails.length);
 
     // Combine all jobs
     const allJobs = [
@@ -1343,7 +1343,7 @@ module.exports.getAllJobs = async (req, res) => {
       ...assignedJobDetails,
     ];
 
-    console.log("Total jobs before org details:", allJobs.length);
+    // console.log("Total jobs before org details:", allJobs.length);
 
     // Collect all unique organization IDs from jobs
     const orgIds = new Set();
@@ -1440,10 +1440,10 @@ module.exports.getAllJobs = async (req, res) => {
     const totalDocs = jobsWithCollegeNames.length;
     const totalPages = Math.ceil(totalDocs / limit);
 
-    console.log("Final result:", {
-      totalDocs,
-      paginatedJobs: paginatedJobs.length,
-    });
+    // console.log("Final result:", {
+    //   totalDocs,
+    //   paginatedJobs: paginatedJobs.length,
+    // });
 
     res.status(200).json({
       data: paginatedJobs,
