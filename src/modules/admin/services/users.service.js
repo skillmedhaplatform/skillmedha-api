@@ -699,6 +699,23 @@ const sendMail = async (to, subject, text) => {
   });
 };
 
+const getPublicBaseUrl = (req) => {
+  const configuredBaseUrl =
+    process.env.RESET_PASSWORD_BASE_URL ||
+    process.env.API_PUBLIC_URL ||
+    process.env.PUBLIC_BASE_URL;
+
+  if (configuredBaseUrl) {
+    return configuredBaseUrl.replace(/\/$/, "");
+  }
+
+  const forwardedProto = req.get("x-forwarded-proto");
+  const protocol = forwardedProto || req.protocol || "https";
+  const host = req.get("host");
+
+  return `${protocol}://${host}`;
+};
+
 app.post("/forgotStudentPassword", async (req, res) => {
   const { email, type } = req.body;
 
@@ -721,7 +738,7 @@ app.post("/forgotStudentPassword", async (req, res) => {
       }
     );
 
-    const resetUrl = `https://gql.skillmedha.com/reset-password?token=${token}`;
+    const resetUrl = `${getPublicBaseUrl(req)}/reset-password?token=${token}`;
 
     const message = `You requested a password reset. Click the link below:\n\n${resetUrl}`;
 
