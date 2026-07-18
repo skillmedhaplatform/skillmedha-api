@@ -135,7 +135,7 @@ app.post("/login", async (req, res) => {
       orgId: findUser.orgId,
       loginStreak,
     };
-
+console.log(loginData)
     const token = jwt.sign(loginData, process.env.JWT_SECRET);
 
     await mainDBusers.updateOne(
