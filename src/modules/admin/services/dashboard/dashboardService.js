@@ -402,47 +402,54 @@ class DashboardService {
         .collection("organizations")
         .countDocuments({ active: true });
 
-      // Count jobs from KSquare DB AND organization-specific DBs
-      const totalJobsInKSquare = await kSquareDB
-        .collection("job")
-        .countDocuments();
-
       const allOrganizations = await globalDB
         .collection("organizations")
         .find({ active: true })
         .toArray();
 
-      let jobsInOrgDBs = 0;
+      let totalJobs = 0;
 
       for (const org of allOrganizations) {
-        try {
-          const orgDB = getOrgDB(org.orgId);
-
-          // Check both 'job' and 'jobs' collection names
-          let jobsInThisDB = 0;
-
+        if (org.type === "company") {
           try {
-            jobsInThisDB = await orgDB.collection("job").countDocuments();
-          } catch (e) {
-            // No job collection
-          }
+            // Check KSquare DB for jobs linked to this company
+            const jobsByProfileId = await kSquareDB
+              .collection("job")
+              .countDocuments({ profileId: org.orgId });
 
-          try {
-            const jobsInJobsCollection = await orgDB
-              .collection("jobs")
-              .countDocuments();
-            jobsInThisDB += jobsInJobsCollection;
-          } catch (e) {
-            // No jobs collection
-          }
+            const jobsByOrgId = await kSquareDB
+              .collection("job")
+              .countDocuments({ orgId: org.orgId });
 
-          jobsInOrgDBs += jobsInThisDB;
-        } catch (error) {
-          // Silent fail for organizations without job collections
+            let jobCount = jobsByProfileId || jobsByOrgId;
+
+            // Also check company's own database for jobs
+            try {
+              const companyDB = getOrgDB(org.orgId);
+              const jobsInCompanyDB = await companyDB
+                .collection("job")
+                .countDocuments();
+              jobCount += jobsInCompanyDB;
+            } catch (e) {
+              // No job collection
+            }
+            
+            try {
+              const companyDB = getOrgDB(org.orgId);
+              const jobsInJobsCollection = await companyDB
+                .collection("jobs")
+                .countDocuments();
+              jobCount += jobsInJobsCollection;
+            } catch (e) {
+              // No jobs collection
+            }
+
+            totalJobs += jobCount;
+          } catch (error) {
+            // Silent fail for organizations without job collections
+          }
         }
       }
-
-      const totalJobs = totalJobsInKSquare + jobsInOrgDBs;
 
       // Count assigned jobs
       const totalAssignedJobs = await kSquareDB
