@@ -80,26 +80,62 @@ async function getAllStudents(req, res) {
 }
 
 async function getStudentCreds(req, res) {
-  const { student } = connectTodb(req.tenantDB);
+  const { student, progress } = connectTodb(req.tenantDB);
+  const { mainDBusers } = getGlobalCollections();
   if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   try {
-    const { email } = req.query;
-    const findStudent = await student.findOne({ email });
-    if (!findStudent) throw new Error('Student not found');
-    res.status(200).json({ data: findStudent });
+    const email = req.query.email || req.email;
+    const globalUser = await mainDBusers.findOne({ email });
+    let findStudent = await student.findOne({ email });
+
+    if (!findStudent && !globalUser) throw new Error('Student not found');
+
+    if (progress && findStudent && findStudent._id) {
+      const studentProgress = await progress.find(
+        { studentId: findStudent._id.toString() },
+        { projection: { testId: 1, status: 1, scoreData: 1, createdAt: 1, testEndedAt: 1 } }
+      ).toArray();
+      
+      if (studentProgress && studentProgress.length > 0) {
+        findStudent.progress = studentProgress;
+      }
+    }
+
+    const responseData = findStudent || globalUser;
+
+    res.status(200).json({
+      data: {
+        ...responseData,
+        verified: globalUser ? globalUser.active : false,
+        active: globalUser ? globalUser.active : false,
+        orgDetails: { orgId: req.orgId }
+      }
+    });
   } catch (error) {
     res.status(500).json({ err: error.message });
   }
 }
 
 async function getSingleStudent(req, res) {
-  const { student } = connectTodb(req.tenantDB);
+  const { student, progress } = connectTodb(req.tenantDB);
   if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   try {
     const { studentId } = req.params;
     const findStudent = await student.findOne({ globalId: studentId });
     if (!findStudent) throw new Error('Please select valid student');
-    res.status(200).json({ data: findStudent });
+
+    if (progress && findStudent._id) {
+      const studentProgress = await progress.find(
+        { studentId: findStudent._id.toString() },
+        { projection: { testId: 1, status: 1, scoreData: 1, createdAt: 1, testEndedAt: 1 } }
+      ).toArray();
+      
+      if (studentProgress && studentProgress.length > 0) {
+        findStudent.progress = studentProgress;
+      }
+    }
+
+    res.status(200).json({ data: { ...findStudent, orgDetails: { orgId: req.orgId } } });
   } catch (error) {
     res.status(500).json({ err: error.message });
   }

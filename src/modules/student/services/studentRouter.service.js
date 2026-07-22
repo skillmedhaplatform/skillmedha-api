@@ -27,6 +27,7 @@ const nodemailer = require('nodemailer');
 const { mandatory: authenticate } = require('../../../shared/middleware/auth.middleware');
 const { selectTenantDB } = require('../../../shared/middleware/selectTenantDB.middleware');
 const { connectTodb, getGlobalCollections, getTenantDB } = require('../../../shared/db/connection');
+const studentCtrl = require('../controllers/student.controller');
 const { parseIfJSON } = require('../../../shared/utils/helpers');
 const { archiveAndDeleteOne, archiveAndDeleteMany } = require('../../../shared/utils/archive.service');
 const config = require('../../../config');
@@ -97,41 +98,10 @@ router.get('/getAllStudents', authenticate, selectTenantDB, async (req, res) => 
 });
 
 /* GET /getStudentCreds */
-router.get('/getStudentCreds', authenticate, selectTenantDB, async (req, res) => {
-  const { student } = connectTodb(req.tenantDB);
-  const { mainDBusers } = getCollections();
-  if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
-  try {
-    const email = req.query.email || req.email;
-    const globalUser = await mainDBusers.findOne({ email });
-    let findStudent = await student.findOne({ email });
-
-    if (!findStudent && !globalUser) throw new Error('Student not found');
-
-    const responseData = findStudent || globalUser;
-
-    res.status(200).json({
-      data: {
-        ...responseData,
-        verified: globalUser ? globalUser.active : false,
-        active: globalUser ? globalUser.active : false,
-        orgDetails: { orgId: req.orgId }
-      }
-    });
-  } catch (error) { res.status(500).json({ err: error.message }); }
-});
+router.get('/getStudentCreds', authenticate, selectTenantDB, studentCtrl.getStudentCreds);
 
 /* GET /getSingleStudent/:studentId */
-router.get('/getSingleStudent/:studentId', authenticate, selectTenantDB, async (req, res) => {
-  const { student } = connectTodb(req.tenantDB);
-  if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
-  try {
-    const { studentId } = req.params;
-    const findStudent = await student.findOne({ globalId: studentId });
-    if (!findStudent) throw new Error('Please select valid student');
-    res.status(200).json({ data: { ...findStudent, orgDetails: { orgId: req.orgId } } });
-  } catch (error) { res.status(500).json({ err: error.message }); }
-});
+router.get('/getSingleStudent/:studentId', authenticate, selectTenantDB, studentCtrl.getSingleStudent);
 
 /* POST /createStudentAccount */
 router.post('/createStudentAccount', authenticate, selectTenantDB, async (req, res) => {

@@ -104,11 +104,38 @@ io.on("connection", (socket) => {
 
   socket.on("testStarted", async (data) => {
     try {
-      const { student } = connectTodb(socket.tenantDB);
+      const { student, test, progress } = connectTodb(socket.tenantDB);
       const covId = new mongoDB.ObjectId(data.userId);
       const findUser = await student.findOne({ _id: covId });
 
       if (findUser) {
+        if (data.testId) {
+          try {
+            const findTest = await test.findOne({ _id: new mongoDB.ObjectId(data.testId) });
+            if (findTest) {
+              const maxAttempts = Number(findTest?.access?.attemptsPerRespondent);
+              if (
+                findTest?.access?.attemptsPerRespondent !== undefined &&
+                findTest?.access?.attemptsPerRespondent !== "" &&
+                findTest?.access?.attemptsPerRespondent !== null &&
+                maxAttempts !== -1
+              ) {
+                const previousAttempts = await progress.countDocuments({
+                  studentId: findUser._id.toString(),
+                  testId: findTest._id.toString(),
+                  attemptGeneration: findTest?.attemptGeneration || 0,
+                });
+                if (previousAttempts >= maxAttempts) {
+                  console.warn(`[ATTEMPT EXCEEDED] Student ${findUser._id} attempted to start test ${findTest._id} but reached max attempts (${previousAttempts}/${maxAttempts}).`);
+                  return socket.emit("error", { message: "Maximum attempts reached for this test." });
+                }
+              }
+            }
+          } catch (err) {
+            console.error("testStarted attempt validation error:", err);
+          }
+        }
+
         await student.updateOne(
           { _id: findUser._id },
           { $set: { testEndedSocketId: socket.id } },
@@ -486,6 +513,8 @@ io.on("connection", (socket) => {
           studentId: findUser._id.toString(),
           testId: data?.testId,
           createdAt: data?.createdAt || new Date().toISOString(),
+          status: "completed",
+          attemptGeneration: (testData && testData.attemptGeneration) ? testData.attemptGeneration : 0,
         };
 
      
@@ -511,6 +540,7 @@ io.on("connection", (socket) => {
         .emit("testEndedtestportal", {
           ...data,
           progData: progData?.insertedId,
+          progressId: progData?.insertedId?.toString(),
         });
     } catch (error) {
       require('fs').appendFileSync('socket_error.log', new Date().toISOString() + ' testEnded error: ' + error.stack + '\n');
