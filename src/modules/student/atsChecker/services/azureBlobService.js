@@ -96,6 +96,9 @@ const uploadResumeFile = async (fileBuffer, originalFileName, studentId, fileTyp
     metadata: {
       studentId,
       fileType,
+      // Azure blob metadata values must be ASCII — encode to safely round-trip
+      // filenames containing spaces, accents, or other non-ASCII characters.
+      originalFileName: encodeURIComponent(originalFileName || ""),
       uploadedAt: new Date().toISOString(),
     },
   });
@@ -214,7 +217,10 @@ const downloadResumeFile = async (blobName) => {
 
     // Get blob properties for metadata
     const properties = await blockBlobClient.getProperties();
-    const fileName = properties.metadata?.originalFileName || blobName.split('/').pop() || 'resume.pdf';
+    const storedName = properties.metadata?.originalFileName;
+    const fileName = (storedName ? decodeURIComponent(storedName) : "") ||
+      blobName.split('/').pop() ||
+      'resume.pdf';
     const mimeType = properties.contentType || 'application/pdf';
 
     return {

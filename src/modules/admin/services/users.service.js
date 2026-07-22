@@ -135,7 +135,7 @@ app.post("/login", async (req, res) => {
       orgId: findUser.orgId,
       loginStreak,
     };
-
+console.log(loginData)
     const token = jwt.sign(loginData, process.env.JWT_SECRET);
 
     await mainDBusers.updateOne(
@@ -709,9 +709,13 @@ const getPublicBaseUrl = (req) => {
     return configuredBaseUrl.replace(/\/$/, "");
   }
 
+  // Behind a reverse proxy / tunnel (Azure Container Apps, ngrok, etc.) the
+  // Host the client actually reached is in x-forwarded-host, not req.host —
+  // without this, links would resolve to the proxy's internal address.
   const forwardedProto = req.get("x-forwarded-proto");
+  const forwardedHost = req.get("x-forwarded-host");
   const protocol = forwardedProto || req.protocol || "https";
-  const host = req.get("host");
+  const host = forwardedHost || req.get("host");
 
   return `${protocol}://${host}`;
 };

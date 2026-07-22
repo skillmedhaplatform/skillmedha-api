@@ -7,15 +7,16 @@
  *   app.use("/api", fileUploadRouter);
  *
  * Full endpoint URLs (assuming mounted at /api):
- *   POST   /api/upload-resume    - Upload resume to Azure Blob Storage
- *   DELETE /api/delete-resume    - Delete resume from Azure Blob Storage
+ *   POST   /api/upload-resume       - Upload resume to Azure Blob Storage (replaces any existing one)
+ *   GET    /api/resume/:studentId   - Fetch the student's current resume on file, if any
+ *   DELETE /api/delete-resume       - Delete resume from Azure Blob Storage
  *
  * Place this file in your Node.js/Express API repo under: routes/fileUpload.js
  */
 
 const express = require("express");
 const router = express.Router();
-const { uploadResume, deleteResume } = require("../controllers/fileUploadController");
+const { uploadResume, getCurrentResume, deleteResume } = require("../controllers/fileUploadController");
 const {
   uploadResumeSingle,
   validateFilePresence,
@@ -40,6 +41,14 @@ router.post(
   validateFileSize,        // Additional file size validation
   uploadResume             // Controller: uploads to S3
 );
+
+/**
+ * GET /api/resume/:studentId
+ * Fetch the student's current resume on file, if any.
+ *
+ * Response: { success: true, data: { resumeId, fileName, blobName, fileUrl, atsScore, createdAt, updatedAt } | null }
+ */
+router.get("/resume/:studentId", getCurrentResume);
 
 /**
  * DELETE /api/delete-resume

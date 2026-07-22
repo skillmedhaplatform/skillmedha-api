@@ -27,6 +27,9 @@ const validateFileKey = (fileKey) => {
 // ── POST /upload-resume ──────────────────────────────────────────────────
 /**
  * Upload resume file to Azure Blob Storage.
+ * A student keeps exactly one resume on file — uploading a new one replaces
+ * (deletes) whatever blob/record they had before, rather than accumulating.
+ *
  * Multipart form-data with fields:
  *   - resume (file): PDF, DOCX, or DOC resume file
  *   - studentId (string): Student identifier
@@ -49,24 +52,38 @@ const uploadResume = async (req, res) => {
       });
     }
 
-    // ── 2. Upload file to Azure Blob Storage ─────────────────────────────
-    const { buffer, originalname, mimetype } = req.file;
+    // ── 2. Remove any previous resume this student had on file ──────────
+    const existing = await Resume.findOne({ studentId });
+    if (existing?.blobName) {
+      await azureBlobService.deleteBlob(existing.blobName);
+    }
+
+    // ── 3. Upload new file to Azure Blob Storage ─────────────────────────
+    const { buffer, originalname } = req.file;
 
     const uploadResult = await azureBlobService.uploadResumeFile(
       buffer,
       originalname,
       studentId,
-      mimetype
+      "original"
     );
 
-    // ── 3. Save resume details to MongoDB ───────────────────────────────
-    const resume = await Resume.create({
-      fileName: originalname,
-      fileUrl: uploadResult.sasUrl,
-      blobName: uploadResult.blobName,
-    });
+    // ── 4. Upsert the student's single Resume record ─────────────────────
+    const resume = await Resume.findOneAndUpdate(
+      { studentId },
+      {
+        studentId,
+        fileName: originalname,
+        fileUrl: uploadResult.sasUrl,
+        blobName: uploadResult.blobName,
+        atsScore: null,
+        extractedText: "",
+        updatedAt: new Date(),
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
 
-    // ── 4. Return success response ──────────────────────────────────────
+    // ── 5. Return success response ──────────────────────────────────────
     res.status(200).json({
       success: true,
       message: "File uploaded successfully",
@@ -89,9 +106,51 @@ const uploadResume = async (req, res) => {
   }
 };
 
+// ── GET /resume/:studentId ────────────────────────────────────────────────
+/**
+ * Fetch the student's current resume on file, if any.
+ * Returns { success: true, data: null } when the student has no resume yet.
+ */
+const getCurrentResume = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const studentIdError = validateStudentId(studentId);
+    if (studentIdError) {
+      return res.status(400).json({ success: false, message: studentIdError });
+    }
+
+    const resume = await Resume.findOne({ studentId }).lean();
+    if (!resume) {
+      return res.status(200).json({ success: true, data: null });
+    }
+
+    // SAS URLs are time-limited — refresh before returning.
+    const freshUrl = await azureBlobService.refreshSasUrl(resume.blobName);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        resumeId: resume._id,
+        fileName: resume.fileName,
+        blobName: resume.blobName,
+        fileUrl: freshUrl || resume.fileUrl,
+        atsScore: resume.atsScore,
+        createdAt: resume.createdAt,
+        updatedAt: resume.updatedAt,
+      },
+    });
+  } catch (error) {
+    console.error("Error in getCurrentResume:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch current resume.",
+    });
+  }
+};
+
 // ── DELETE /delete-resume ────────────────────────────────────────────────
 /**
- * Delete resume file from Azure Blob Storage.
+ * Delete resume file from Azure Blob Storage and its Resume record.
  * Body: { blobName: string, fileKey?: string, studentId?: string }
  *
  * Returns: { success: true, message, blobName }
@@ -118,7 +177,10 @@ const deleteResume = async (req, res) => {
     // ── 2. Delete file from Azure Blob Storage ──────────────────────────
     await azureBlobService.deleteBlob(fileKey);
 
-    // ── 3. Return success response ──────────────────────────────────────
+    // ── 3. Remove the matching Resume record, if any ─────────────────────
+    await Resume.deleteOne({ blobName: fileKey });
+
+    // ── 4. Return success response ──────────────────────────────────────
     res.status(200).json({
       success: true,
       message: "File deleted successfully",
@@ -139,5 +201,6 @@ const deleteResume = async (req, res) => {
 
 module.exports = {
   uploadResume,
+  getCurrentResume,
   deleteResume,
 };
