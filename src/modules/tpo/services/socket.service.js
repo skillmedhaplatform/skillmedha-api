@@ -508,6 +508,17 @@ io.on("connection", (socket) => {
           console.warn("testEnded: invalid testId format", data?.testId);
         }
 
+        // getResultsData defaults oneTimeStatus to "VIEWED" whenever
+        // oneTimeResult is missing on the progress doc — without these
+        // fields every socket-submitted attempt was silently treated as
+        // already-viewed and always fell back to the Permanent view.
+        const resultsConfig = testData?.resultsConfig || {};
+        const resultConfigurationSnapshot = {
+          version: 1,
+          oneTimePermissions: resultsConfig?.oneTime?.permissions || {},
+          permanentPermissions: resultsConfig?.permanent?.permissions || {},
+        };
+
         const progressDoc = {
           ...data,
           studentId: findUser._id.toString(),
@@ -515,6 +526,12 @@ io.on("connection", (socket) => {
           createdAt: data?.createdAt || new Date().toISOString(),
           status: "completed",
           attemptGeneration: (testData && testData.attemptGeneration) ? testData.attemptGeneration : 0,
+          resultConfigurationSnapshot,
+          oneTimeResult: {
+            status: "UNVIEWED",
+            sessionId: null,
+            startedAt: null,
+          },
         };
 
      
