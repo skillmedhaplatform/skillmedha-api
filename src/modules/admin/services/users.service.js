@@ -99,6 +99,41 @@ app.post("/login", async (req, res) => {
     const compare = await bcrypt.compare(password, findUser.password);
     if (!compare) throw new Error("password incorrect");
 
+    // ===== TENANT RECORD VERIFICATION =====
+    // The mainDBusers entry alone isn't sufficient — the user must also exist
+    // in their org's tenant DB (e.g. the "student" collection under orgId
+    // codin_687106567ba5c99b1b899a5e), otherwise login must be rejected.
+    if (findUser.orgId) {
+      const tenantDB = await getTenantDB(findUser.orgId);
+      const { student, tpo, users } = connectTodb(tenantDB);
+
+      const tenantCollection =
+        findUser.type === "student"
+          ? student
+          : findUser.type === "college"
+          ? tpo
+          : findUser.type === "company" || findUser.type === "users"
+          ? users
+          : null;
+
+      if (tenantCollection) {
+        const tenantUser = await tenantCollection.findOne({
+          email: findUser.email.toLowerCase(),
+        });
+        if (!tenantUser) {
+          // Deactivate in mainDBusers so subsequent login attempts fail fast
+          // on the `active` check above instead of re-querying the tenant DB.
+          await mainDBusers.updateOne(
+            { _id: findUser._id },
+            { $set: { active: false } }
+          );
+          throw new Error(
+            "Account Deactivated Please contact site administrator"
+          );
+        }
+      }
+    }
+
     // ===== LOGIN STREAK LOGIC =====
     const today = new Date();
     today.setHours(0, 0, 0, 0);
