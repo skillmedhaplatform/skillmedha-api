@@ -93,7 +93,7 @@ async function getStudentCreds(req, res) {
     if (progress && findStudent && findStudent._id) {
       const studentProgress = await progress.find(
         { studentId: findStudent._id.toString() },
-        { projection: { testId: 1, status: 1, scoreData: 1, createdAt: 1, testEndedAt: 1 } }
+        { projection: { testId: 1, status: 1, scoreData: 1, createdAt: 1, testEndedAt: 1, attemptGeneration: 1 } }
       ).toArray();
       
       if (studentProgress && studentProgress.length > 0) {
@@ -127,7 +127,7 @@ async function getSingleStudent(req, res) {
     if (progress && findStudent._id) {
       const studentProgress = await progress.find(
         { studentId: findStudent._id.toString() },
-        { projection: { testId: 1, status: 1, scoreData: 1, createdAt: 1, testEndedAt: 1 } }
+        { projection: { testId: 1, status: 1, scoreData: 1, createdAt: 1, testEndedAt: 1, attemptGeneration: 1 } }
       ).toArray();
       
       if (studentProgress && studentProgress.length > 0) {
