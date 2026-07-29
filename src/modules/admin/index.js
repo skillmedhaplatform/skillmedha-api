@@ -108,6 +108,7 @@ router.post('/updateCompany', mandatory, selectTenantDB, companySvc.updateCompan
 router.get('/getSkills', mandatory, companySvc.getAvailableSkills);
 router.get('/organizations/:orgId/jobs/paginated', companySvc.getJobsByOrgPaginated);
 router.get('/organizations/:orgId/users/paginated', companySvc.getUsersByOrgPaginated);
+router.delete('/deleteHr/:hrId', mandatory, selectTenantDB, companySvc.deleteHr);
 
 // ─── TPO Auth ─────────────────────────────────────────────────────────────────
 router.post('/createTpo', mandatory, selectTenantDB, tpoSvc.createTpo);
