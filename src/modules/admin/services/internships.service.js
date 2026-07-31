@@ -2720,7 +2720,7 @@ async function resolveCourse(courseId, tenantDB) {
 
 // Helper: compute cart total
 function computeCartTotal(items = []) {
-  return items.reduce((sum, i) => sum + (i.discountedPrice ?? i.price ?? 0), 0);
+  return items.reduce((sum, i) => sum + Number(i.discountedPrice ?? i.price ?? 0), 0);
 }
 
 // Helper: re-fetch & return enriched cart (used after every mutation)
@@ -2780,8 +2780,8 @@ async function sendWishlistResponse(req, res) {
             category: course.category,
             difficulty: course.difficulty,
             type: course.type,
-            price: course.pricing?.originalPrice ?? course.price ?? 0,
-            discountedPrice: course.pricing?.finalPrice ?? course.discountedPrice ?? 0,
+            price: Number(course.pricing?.originalPrice ?? course.price ?? 0),
+            discountedPrice: Number(course.pricing?.finalPrice ?? course.discountedPrice ?? course.pricing?.currentPrice ?? course.price ?? 0),
           },
           addedAt: item.addedAt,
         };
@@ -2828,8 +2828,8 @@ app.post("/cart", authenticate, selectTenantDB, async (req, res) => {
           items: {
             _id: new mongoDB.ObjectId(),
             courseId,
-            price: course.pricing?.originalPrice ?? course.price ?? 0,
-            discountedPrice: course.pricing?.finalPrice ?? course.discountedPrice ?? 0,
+            price: Number(course.pricing?.originalPrice ?? course.price ?? 0),
+            discountedPrice: Number(course.pricing?.finalPrice ?? course.discountedPrice ?? course.pricing?.currentPrice ?? course.price ?? 0),
             addedAt: new Date().getTime(),
           },
         },

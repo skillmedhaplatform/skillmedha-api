@@ -303,12 +303,13 @@ app.get("/getStudentCreds", authenticate, selectTenantDB, async (req, res) => {
             }
           } else {
             // Handle local jobs
+            const localJobIdStr = appliedJobObj.id ? appliedJobObj.id.toString() : "";
             if (
-              typeof appliedJobObj.id === "string" &&
-              appliedJobObj.id.match(/^[0-9a-fA-F]{24}$/)
+              localJobIdStr.length === 24 &&
+              localJobIdStr.match(/^[0-9a-fA-F]{24}$/)
             ) {
               jobDetails = await job.findOne({
-                _id: new mongoDB.ObjectId(appliedJobObj.id),
+                _id: new mongoDB.ObjectId(localJobIdStr),
               });
 
               if (jobDetails) {
@@ -377,6 +378,8 @@ app.get("/getStudentCreds", authenticate, selectTenantDB, async (req, res) => {
     });
 
     // Return student data with enhanced appliedJobs
+    const fs = require('fs');
+    fs.writeFileSync('/tmp/appliedJobs.json', JSON.stringify(enhancedAppliedJobs, null, 2));
     res.status(200).json({
       data: {
         ...findStudent,
