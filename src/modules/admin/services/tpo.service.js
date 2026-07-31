@@ -180,6 +180,43 @@ module.exports.updateTpo = async (req, res) => {
   }
 };
 
+module.exports.toggleTpoStatus = async (req, res) => {
+  try {
+    if (!req.isAuth) {
+      return res.status(401).json({ err: "User not authorised" });
+    }
+    const { tpoId } = req.params;
+    const { active } = req.body;
+
+    const findUser = await mainDBusers.findOne({
+      _id: new mongoDB.ObjectId(tpoId),
+    });
+
+    if (!findUser) throw new Error("User not registered");
+
+    const result = await mainDBusers.updateOne(
+      { _id: new mongoDB.ObjectId(tpoId) },
+      { $set: { active: active } }
+    );
+
+    if (findUser.orgId) {
+      const db = await getTenantDB(findUser.orgId, 5);
+      const { tpo } = connectTodb(db);
+      await tpo.updateOne(
+        { globalId: tpoId },
+        { $set: { active: active } }
+      );
+    }
+
+    res.status(200).json({
+      msg: `TPO successfully ${active ? 'activated' : 'deactivated'}`,
+      active: active
+    });
+  } catch (error) {
+    res.status(500).json({ err: error.message });
+  }
+};
+
 module.exports.deleteTpo = async (req, res) => {
   try {
     if (!req.isAuth) {

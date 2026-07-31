@@ -101,6 +101,70 @@ async function getStudentCreds(req, res) {
       }
     }
 
+    let enhancedAppliedJobs = [];
+    if (findStudent && Array.isArray(findStudent.appliedJobs)) {
+      const { job, assignedJob } = connectTodb(req.tenantDB);
+      const { ObjectId } = require("mongodb");
+      
+      enhancedAppliedJobs = await Promise.all(
+        findStudent.appliedJobs.map(async (appliedJobObj) => {
+          let jobDetails = null;
+          if (appliedJobObj.isAssignedJob) {
+            const appliedIdStr = appliedJobObj.id ? appliedJobObj.id.toString() : "";
+            const assignedJobDoc = await assignedJob.findOne({
+              jobId: appliedIdStr,
+            });
+            if (assignedJobDoc) {
+              let rootJobDb = job;
+              if (assignedJobDoc.companyOrgId) {
+                const companyDb = await getTenantDB(assignedJobDoc.companyOrgId);
+                if (companyDb) {
+                  rootJobDb = connectTodb(companyDb).job;
+                }
+              }
+              const parentIdStr = (assignedJobDoc.parentJobId || assignedJobDoc.jobId).toString();
+              if (parentIdStr.length === 24 && parentIdStr.match(/^[0-9a-fA-F]{24}$/)) {
+                const rootJobDetails = await rootJobDb.findOne({
+                  _id: new ObjectId(parentIdStr),
+                });
+                if (rootJobDetails) {
+                  jobDetails = {
+                    ...rootJobDetails,
+                    ...assignedJobDoc,
+                    _id: assignedJobDoc._id,
+                    type: "assigned",
+                    isAssignedJob: true,
+                  };
+                }
+              }
+            }
+          } else {
+            const localJobIdStr = appliedJobObj.id ? appliedJobObj.id.toString() : "";
+            if (
+              localJobIdStr.length === 24 &&
+              localJobIdStr.match(/^[0-9a-fA-F]{24}$/)
+            ) {
+              jobDetails = await job.findOne({
+                _id: new ObjectId(localJobIdStr),
+              });
+              if (jobDetails) {
+                jobDetails = {
+                  ...jobDetails,
+                  type: "local",
+                  isAssignedJob: false,
+                };
+              }
+            }
+          }
+          return {
+            ...appliedJobObj,
+            jobDetails,
+          };
+        })
+      );
+      findStudent.appliedJobs = enhancedAppliedJobs;
+    }
+
     const responseData = findStudent || globalUser;
 
     res.status(200).json({
@@ -357,8 +421,18 @@ async function getBatches(req, res) {
   const { student } = connectTodb(req.tenantDB);
   if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   try {
-    const batches = await student.distinct('batch');
-    res.status(200).json({ data: batches });
+    const batchList = await student.distinct('batch');
+    const yearList = await student.distinct('yearOfPassing');
+    
+    const combined = Array.from(
+      new Set([
+        ...(Array.isArray(batchList) ? batchList : []),
+        ...(Array.isArray(yearList) ? yearList : [])
+      ].map(y => (y ? String(y).trim() : '')))
+    ).filter(y => y !== '' && y !== 'null' && y !== 'undefined');
+
+    const formatted = combined.map(y => ({ yearOfPassing: y }));
+    res.status(200).json({ data: formatted });
   } catch (error) {
     res.status(500).json({ err: error.message });
   }
