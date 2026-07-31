@@ -321,8 +321,18 @@ async function getBatches(req, res) {
   const { student } = connectTodb(req.tenantDB);
   if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   try {
-    const batches = await student.distinct('batch');
-    res.status(200).json({ data: batches });
+    const batchList = await student.distinct('batch');
+    const yearList = await student.distinct('yearOfPassing');
+    
+    const combined = Array.from(
+      new Set([
+        ...(Array.isArray(batchList) ? batchList : []),
+        ...(Array.isArray(yearList) ? yearList : [])
+      ].map(y => (y ? String(y).trim() : '')))
+    ).filter(y => y !== '' && y !== 'null' && y !== 'undefined');
+
+    const formatted = combined.map(y => ({ yearOfPassing: y }));
+    res.status(200).json({ data: formatted });
   } catch (error) {
     res.status(500).json({ err: error.message });
   }
