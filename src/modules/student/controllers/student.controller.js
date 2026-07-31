@@ -104,7 +104,6 @@ async function getStudentCreds(req, res) {
     let enhancedAppliedJobs = [];
     if (findStudent && Array.isArray(findStudent.appliedJobs)) {
       const { job, assignedJob } = connectTodb(req.tenantDB);
-      const { ObjectId } = require("mongodb");
       
       enhancedAppliedJobs = await Promise.all(
         findStudent.appliedJobs.map(async (appliedJobObj) => {
@@ -125,7 +124,7 @@ async function getStudentCreds(req, res) {
               const parentIdStr = (assignedJobDoc.parentJobId || assignedJobDoc.jobId).toString();
               if (parentIdStr.length === 24 && parentIdStr.match(/^[0-9a-fA-F]{24}$/)) {
                 const rootJobDetails = await rootJobDb.findOne({
-                  _id: new ObjectId(parentIdStr),
+                  _id: new mongoDB.ObjectId(parentIdStr),
                 });
                 if (rootJobDetails) {
                   jobDetails = {
@@ -145,7 +144,7 @@ async function getStudentCreds(req, res) {
               localJobIdStr.match(/^[0-9a-fA-F]{24}$/)
             ) {
               jobDetails = await job.findOne({
-                _id: new ObjectId(localJobIdStr),
+                _id: new mongoDB.ObjectId(localJobIdStr),
               });
               if (jobDetails) {
                 jobDetails = {
