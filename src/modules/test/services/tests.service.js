@@ -6,9 +6,106 @@ const nodemailer = require("nodemailer");
 const {
   notifyTestAssignment,
   NOTIFICATION_TYPES,
-} = require("../../../shared/utils/eventBus");
+} = require("../../../shared/utils/notificationService");
+const {
+  getShortParaScore,
+  getSingleChoiceScore,
+  getTrueFalseScore,
+  getMultipleChoiceScore,
+} = require("../../tpo/services/utils/scoreCalculation");
 const { ObjectId } = mongodb;
 const fs = require("fs").promises;
+
+// Mirrors the per-question scoring socket.service.js's "testEnded" handler
+// does, so progress saved over REST (e.g. when the socket path is slow/down)
+// gets the same status/correctScore annotations instead of being left blank.
+function scoreTestResponse(response, questionsDataFetched, totalQuestionCount) {
+  const scoredResponse = { ...response };
+  const answersArray = questionsDataFetched
+    .map((doc) => ({ answer: doc?.answer, scoreSettings: doc?.scoreSettings, _id: doc?._id }))
+    .filter((e) => e._id != null);
+
+  let finalScore = 0, correctQues = 0, incorrectQues = 0, notAnswered = 0, totalTimeTaken = 0;
+
+  answersArray.forEach((e) => {
+    const qId = e._id;
+    const entry = scoredResponse[qId];
+    if (!e?.answer) {
+      scoredResponse[qId] = { ...entry, status: "unattempted" };
+      return;
+    }
+    if (!entry || entry.answers == null || entry.answers === "undefined") {
+      if (entry?.timeTaken !== undefined) {
+        totalTimeTaken += entry.timeTaken;
+        notAnswered++;
+        scoredResponse[qId] = { ...entry, status: "notanswered" };
+      } else {
+        scoredResponse[qId] = { ...entry, status: "unattempted" };
+      }
+      return;
+    }
+    if (entry.answers.length === 0) {
+      if (entry.timeTaken) totalTimeTaken += entry.timeTaken;
+      notAnswered++;
+      scoredResponse[qId] = { ...entry, status: "notanswered" };
+      return;
+    }
+
+    totalTimeTaken += entry.timeTaken || 0;
+    const questionType = Object.keys(e.answer)[0];
+    let correctScore = 0, negativeScore = 0, bonusScore = 0, correctFlag;
+
+    switch (questionType) {
+      case "shortPara":
+        ({ correctScore, negativeScore, correctFlag } = getShortParaScore(e, entry));
+        break;
+      case "singleChoice":
+        ({ correctScore, negativeScore, correctFlag } = getSingleChoiceScore(e, entry));
+        break;
+      case "multipleChoice":
+        ({ correctScore, negativeScore, bonusScore, correctFlag } = getMultipleChoiceScore(e, entry));
+        break;
+      case "truefalse":
+        ({ correctScore, negativeScore, correctFlag } = getTrueFalseScore(e, entry));
+        break;
+      default:
+        break;
+    }
+
+    finalScore += Number(correctScore || 0) + Number(negativeScore || 0) + Number(bonusScore || 0);
+
+    let status;
+    if (correctFlag === true) {
+      correctQues++;
+      status = "correct";
+    } else if (correctFlag === undefined) {
+      notAnswered++;
+      status = "notanswered";
+    } else {
+      incorrectQues++;
+      status = "incorrect";
+    }
+
+    scoredResponse[qId] = { ...entry, correctScore, negativeScore, bonusScore, correctFlag, status };
+  });
+
+  const answeredCount = Object.keys(response || {}).length;
+  const averageTimeTaken = answeredCount > 0 ? totalTimeTaken / answeredCount : 0;
+  const unattemptedQues = Math.max(0, (totalQuestionCount || 0) - answeredCount);
+
+  return {
+    response: scoredResponse,
+    scoreData: {
+      finalScore: +finalScore,
+      correctQues: +correctQues,
+      incorrectQues: +incorrectQues,
+      unattemptedQues: +unattemptedQues,
+      totalTimeTaken: +totalTimeTaken,
+      averageTimeTaken: +averageTimeTaken,
+      notAnswered: +notAnswered,
+    },
+  };
+}
 
 // 1. SEARCH QUESTIONS
 async function searchQuestions(req, res) {
@@ -83,6 +180,11 @@ async function addTest(req, res) {
     };
     const categoryIds = await getOrInsertItems(category, categories);
     const testData = { ...req.body, category: categoryIds };
+    if (!testData.access) {
+      testData.access = { attemptsPerRespondent: 1 };
+    } else if (testData.access.attemptsPerRespondent === undefined) {
+      testData.access.attemptsPerRespondent = 1;
+    }
     const data = await test.insertOne(testData);
     res.json({
       msg: "Test Added successfully",
@@ -152,6 +254,14 @@ async function updateTest(req, res) {
     if (!findTest) throw new Error("No Test to update");
 
     const updateData = { ...req.body };
+
+    // "access" is written independently by several tabs (access type/attempts,
+    // pricing, share-link), each sending only its own subset of fields. A
+    // blind $set would let whichever tab saves last silently erase the
+    // others' fields (e.g. attemptsPerRespondent), so merge instead of replace.
+    if (req.body.access) {
+      updateData.access = { ...(findTest.access || {}), ...req.body.access };
+    }
 
     const getOrInsertItems = async (items, collection) => {
       const ids = [];
@@ -1593,20 +1703,41 @@ async function sendBulkTestAccessMailBatched(req, res) {
 
 // 22. SAVE TEST PROGRESS
 async function saveTestProgress(req, res) {
-  const { test, student, randomStudent, progress } = connectTodb(req.tenantDB);
+  const { test, student, randomStudent, progress, questions } = connectTodb(req.tenantDB);
   try {
-    const { studentId, testId } = req.body;
+    let { studentId, testId } = req.body;
+
+    // Also resolve via the requester's own email whenever studentId is
+    // missing from the body — the testportal submission client has sent an
+    // empty/undefined studentId here (a stale sessionStorage key that was
+    // never actually set), which otherwise fails with "student not found"
+    // even though the request is a legitimate, authenticated student.
+    if (req.role === 'STUDENT' || (!studentId && req.email)) {
+      const { student } = connectTodb(req.tenantDB);
+      const emailRegex = req.email ? new RegExp(`^${req.email.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}$`, "i") : null;
+      const tenantStudent = emailRegex ? await student.findOne({ email: emailRegex }) : null;
+      const expectedStudentId = tenantStudent?._id?.toString() || null;
+
+      if (req.role === 'STUDENT') {
+        if (studentId && studentId !== expectedStudentId) {
+          console.warn(`[SECURITY] IDOR attempt in saveTestProgress: User ${req.email} attempted to save progress for ${studentId}`);
+        }
+        studentId = expectedStudentId; // Enforce ownership
+      } else if (expectedStudentId) {
+        studentId = expectedStudentId;
+      }
+    }
 
     let newStudentId = null;
     let newTestId = null;
 
     try {
       newStudentId = new mongoDB.ObjectId(studentId);
-    } catch (_) {}
+    } catch (_) { }
 
     try {
       newTestId = new mongoDB.ObjectId(testId);
-    } catch (_) {}
+    } catch (_) { }
 
     const findStudent = newStudentId
       ? await student.findOne({ _id: newStudentId })
@@ -1627,13 +1758,59 @@ async function saveTestProgress(req, res) {
 
     if (!findTest) {
       console.warn("saveTestProgress: test not found", { testId });
+      throw new Error("Test not found");
+    }
+
+    const previousAttempts = await progress.countDocuments({
+      studentId: studentId?.toString(),
+      testId: testId?.toString(),
+      attemptGeneration: findTest?.attemptGeneration || 0,
+    });
+
+    const maxAttempts = Number(findTest?.access?.attemptsPerRespondent) || 1;
+
+    if (maxAttempts !== -1 && previousAttempts >= maxAttempts) {
+      throw new Error("You have used all allowed attempts for this test.");
+    }
+
+    const resultsConfig = findTest?.resultsConfig || {};
+    const resultConfigurationSnapshot = {
+      version: 1,
+      oneTimePermissions: resultsConfig?.oneTime?.permissions || {},
+      permanentPermissions: resultsConfig?.permanent?.permissions || {}
+    };
+
+    // Score the response here too (not just via the socket "testEnded" path)
+    // so progress saved over REST still gets correct per-question
+    // status/correctScore instead of being left unscored.
+    let scoredResponse = req.body?.response;
+    let scoreData = req.body?.scoreData;
+    if (req.body?.response && Object.keys(req.body.response).length > 0) {
+      try {
+        const questionObjectIds = Object.keys(req.body.response).map((id) => new mongoDB.ObjectId(id));
+        const questionsDataFetched = await questions.find({ _id: { $in: questionObjectIds } }).toArray();
+        const scored = scoreTestResponse(req.body.response, questionsDataFetched, findTest?.questions?.length);
+        scoredResponse = scored.response;
+        scoreData = scored.scoreData;
+      } catch (scoreErr) {
+        console.error("saveTestProgress: scoring failed", scoreErr.message);
+      }
     }
 
     const payload = {
       ...req.body,
+      response: scoredResponse,
+      scoreData,
       studentId: studentId?.toString(),
       testId: testId?.toString(),
       createdAt: req.body?.createdAt || new Date().toISOString(),
+      attemptGeneration: findTest?.attemptGeneration || 0,
+      resultConfigurationSnapshot,
+      oneTimeResult: {
+        status: "UNVIEWED",
+        sessionId: null,
+        startedAt: null
+      }
     };
 
     const data = await progress.insertOne(payload);
@@ -1663,6 +1840,17 @@ async function updateProgress(req, res) {
     const findProgress = await progress.findOne({ _id: covId });
     if (!findProgress?._id)
       throw new Error("No progress with that id to update");
+
+    if (req.role === 'STUDENT') {
+      const { student } = connectTodb(req.tenantDB);
+      const emailRegex = req.email ? new RegExp(`^${req.email.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}$`, "i") : null;
+      const tenantStudent = await student.findOne({ email: emailRegex });
+      const expectedStudentId = tenantStudent?._id?.toString() || null;
+      if (findProgress.studentId?.toString() !== expectedStudentId) {
+        console.warn(`[SECURITY] IDOR attempt in updateProgress: User ${req.email} attempted to access progress ${progressId}`);
+        return res.status(403).json({ err: "Access Denied: You do not own this progress record." });
+      }
+    }
     const updatedData = await progress.updateOne(
       { _id: findProgress?._id },
       { $set: req.body }
@@ -1827,14 +2015,133 @@ async function deleteQuestionFromComp(req, res) {
 }
 
 const getResultsData = async (req, res) => {
-  const { progress } = connectTodb(req.tenantDB);
+  const { progress, test } = connectTodb(req.tenantDB);
   try {
     const { id } = req.params;
     const data = await progress.findOne({ _id: new ObjectId(id) });
 
-    if (!data) throw new Error("Progress Not Found");
+    if (!data) {
+      return res.status(404).json({ err: "Progress Not Found" });
+    }
 
-    res.status(200).json({ msg: "successful", data });
+    if (req.role === 'STUDENT') {
+      const { student } = connectTodb(req.tenantDB);
+      const emailRegex = req.email ? new RegExp(`^${req.email.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}$`, "i") : null;
+      const tenantStudent = await student.findOne({ email: emailRegex });
+      const expectedStudentId = tenantStudent?._id?.toString() || null;
+      if (data.studentId?.toString() !== expectedStudentId) {
+        console.warn(`[SECURITY] IDOR attempt in getResultsData: User ${req.email} attempted to access progress ${id}`);
+        return res.status(403).json({ err: "Access Denied: You do not have permission to view this result." });
+      }
+    }
+
+    let findTest = null;
+    if (data.testId) {
+      findTest = await test.findOne({ _id: new ObjectId(data.testId) });
+    }
+
+    const liveConfig = findTest?.resultsConfig || {};
+    const snapshot = data.resultConfigurationSnapshot || {};
+
+    let oneTimeStatus = data.oneTimeResult?.status || "VIEWED";
+    let oneTimeStartedAt = data.oneTimeResult?.startedAt;
+
+    if (oneTimeStatus === 'VIEWING' && oneTimeStartedAt) {
+      const diffMins = (new Date() - new Date(oneTimeStartedAt)) / 60000;
+      if (diffMins > 15) {
+        oneTimeStatus = 'UNVIEWED';
+      }
+    }
+
+    let type = 'PERMANENT';
+    let permissions = snapshot?.permanentPermissions || {};
+    let downloadAllowed = liveConfig?.permanent?.downloadAllowed ?? true;
+    let previewAllowed = liveConfig?.permanent?.previewAllowed ?? true;
+    let allowPermanent = true;
+
+    const releaseMode = liveConfig?.permanent?.releaseMode || 'Immediately';
+    if (releaseMode === 'After Final Attempt') {
+      const maxAttempts = Number(findTest?.access?.attemptsPerRespondent) || 1;
+      const previousAttempts = await progress.countDocuments({
+        studentId: data.studentId,
+        testId: data.testId,
+        attemptGeneration: findTest?.attemptGeneration || 0,
+      });
+      if (maxAttempts !== -1 && previousAttempts < maxAttempts) {
+        allowPermanent = false;
+      }
+    } else if (releaseMode === 'After Test Expiry') {
+      if (findTest?.endDate && new Date() < new Date(findTest.endDate)) {
+        allowPermanent = false;
+      }
+    } else if (releaseMode === 'Manual' || releaseMode === 'Batch Wise') {
+      allowPermanent = false;
+    } else if (releaseMode === 'Scheduled') {
+      if (liveConfig?.permanent?.releaseDate && new Date() < new Date(liveConfig.permanent.releaseDate)) {
+        allowPermanent = false;
+      }
+    }
+
+    const isOneTimeLiveEnabled = liveConfig?.oneTime?.enabled ?? true;
+
+    if (isOneTimeLiveEnabled && (oneTimeStatus === 'UNVIEWED' || oneTimeStatus === 'VIEWING')) {
+      type = 'ONE_TIME';
+      permissions = snapshot?.oneTimePermissions || {};
+      downloadAllowed = false;
+      previewAllowed = true;
+
+      if (oneTimeStatus === 'UNVIEWED') {
+        await progress.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { "oneTimeResult.status": "VIEWING", "oneTimeResult.startedAt": new Date().toISOString() } }
+        );
+      }
+    } else {
+      if (!allowPermanent) {
+        return res.status(403).json({ err: "Results are not yet available for this test." });
+      }
+    }
+
+    res.status(200).json({
+      msg: "successful",
+      type,
+      permissions,
+      downloadAllowed,
+      previewAllowed,
+      data
+    });
+  } catch (error) {
+    res.status(500).json({ err: error.message });
+  }
+};
+
+const markOneTimeResultViewed = async (req, res) => {
+  const { progress } = connectTodb(req.tenantDB);
+  try {
+    const { id } = req.params;
+    const data = await progress.findOne({ _id: new ObjectId(id) });
+    if (!data) {
+      return res.status(404).json({ err: "Progress Not Found" });
+    }
+
+    if (req.role === 'STUDENT') {
+      const { student } = connectTodb(req.tenantDB);
+      const emailRegex = req.email ? new RegExp(`^${req.email.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}$`, "i") : null;
+      const tenantStudent = await student.findOne({ email: emailRegex });
+      const expectedStudentId = tenantStudent?._id?.toString() || null;
+      if (data.studentId?.toString() !== expectedStudentId) {
+        console.warn(`[SECURITY] IDOR attempt in markOneTimeResultViewed: User ${req.email} attempted to access progress ${id}`);
+        return res.status(403).json({ err: "Access Denied: You do not have permission to modify this result." });
+      }
+    }
+
+    if (data.oneTimeResult && data.oneTimeResult.status === 'VIEWING') {
+      await progress.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { "oneTimeResult.status": "VIEWED" } }
+      );
+    }
+    res.status(200).json({ msg: "Status updated successfully" });
   } catch (error) {
     res.status(500).json({ err: error.message });
   }
@@ -1843,11 +2150,23 @@ const getResultsData = async (req, res) => {
 const getRecentTestResults = async (req, res) => {
   const { progress, test } = connectTodb(req.tenantDB);
   try {
-    const { studentId } = req.params;
+    let { studentId } = req.params;
+
+    if (req.role === 'STUDENT') {
+      const { student } = connectTodb(req.tenantDB);
+      const emailRegex = req.email ? new RegExp(`^${req.email.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}$`, "i") : null;
+      const tenantStudent = await student.findOne({ email: emailRegex });
+      const expectedStudentId = tenantStudent?._id?.toString() || null;
+
+      if (studentId && studentId !== expectedStudentId) {
+        console.warn(`[SECURITY] IDOR attempt in getRecentTestResults: User ${req.email} attempted to access history for ${studentId}`);
+      }
+      studentId = expectedStudentId; // Enforce ownership
+    }
+
     const progressData = await progress
       .find({ studentId })
       .sort({ _id: -1 })
-      .limit(3)
       .toArray();
 
     // Attach basic test details like title to each progress record
@@ -1910,4 +2229,5 @@ module.exports = {
   addQuestionToBank,
   sendBulkTestAccessMailBatched,
   getRecentTestResults,
+  markOneTimeResultViewed,
 };

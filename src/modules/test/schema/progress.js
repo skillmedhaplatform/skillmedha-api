@@ -16,6 +16,7 @@ const typeDefs = {
                 studentData : JSON
                 createdAt : String
                 studentActivity: JSON
+                attemptGeneration: Int
             }
     
         

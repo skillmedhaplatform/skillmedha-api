@@ -80,26 +80,125 @@ async function getAllStudents(req, res) {
 }
 
 async function getStudentCreds(req, res) {
-  const { student } = connectTodb(req.tenantDB);
+  const { student, progress } = connectTodb(req.tenantDB);
+  const { mainDBusers } = getGlobalCollections();
   if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   try {
-    const { email } = req.query;
-    const findStudent = await student.findOne({ email });
-    if (!findStudent) throw new Error('Student not found');
-    res.status(200).json({ data: findStudent });
+    const email = req.query.email || req.email;
+    const globalUser = await mainDBusers.findOne({ email });
+    let findStudent = await student.findOne({ email });
+
+    if (!findStudent && !globalUser) throw new Error('Student not found');
+
+    if (progress && findStudent && findStudent._id) {
+      const studentProgress = await progress.find(
+        { studentId: findStudent._id.toString() },
+        { projection: { testId: 1, status: 1, scoreData: 1, createdAt: 1, testEndedAt: 1, attemptGeneration: 1 } }
+      ).toArray();
+      
+      if (studentProgress && studentProgress.length > 0) {
+        findStudent.progress = studentProgress;
+      }
+    }
+
+    let enhancedAppliedJobs = [];
+    if (findStudent && Array.isArray(findStudent.appliedJobs)) {
+      const { job, assignedJob } = connectTodb(req.tenantDB);
+      
+      enhancedAppliedJobs = await Promise.all(
+        findStudent.appliedJobs.map(async (appliedJobObj) => {
+          let jobDetails = null;
+          if (appliedJobObj.isAssignedJob) {
+            const appliedIdStr = appliedJobObj.id ? appliedJobObj.id.toString() : "";
+            const assignedJobDoc = await assignedJob.findOne({
+              jobId: appliedIdStr,
+            });
+            if (assignedJobDoc) {
+              let rootJobDb = job;
+              if (assignedJobDoc.companyOrgId) {
+                const companyDb = await getTenantDB(assignedJobDoc.companyOrgId);
+                if (companyDb) {
+                  rootJobDb = connectTodb(companyDb).job;
+                }
+              }
+              const parentIdStr = (assignedJobDoc.parentJobId || assignedJobDoc.jobId).toString();
+              if (parentIdStr.length === 24 && parentIdStr.match(/^[0-9a-fA-F]{24}$/)) {
+                const rootJobDetails = await rootJobDb.findOne({
+                  _id: new mongoDB.ObjectId(parentIdStr),
+                });
+                if (rootJobDetails) {
+                  jobDetails = {
+                    ...rootJobDetails,
+                    ...assignedJobDoc,
+                    _id: assignedJobDoc._id,
+                    type: "assigned",
+                    isAssignedJob: true,
+                  };
+                }
+              }
+            }
+          } else {
+            const localJobIdStr = appliedJobObj.id ? appliedJobObj.id.toString() : "";
+            if (
+              localJobIdStr.length === 24 &&
+              localJobIdStr.match(/^[0-9a-fA-F]{24}$/)
+            ) {
+              jobDetails = await job.findOne({
+                _id: new mongoDB.ObjectId(localJobIdStr),
+              });
+              if (jobDetails) {
+                jobDetails = {
+                  ...jobDetails,
+                  type: "local",
+                  isAssignedJob: false,
+                };
+              }
+            }
+          }
+          return {
+            ...appliedJobObj,
+            jobDetails,
+          };
+        })
+      );
+      findStudent.appliedJobs = enhancedAppliedJobs;
+    }
+
+    const responseData = findStudent || globalUser;
+
+    res.status(200).json({
+      data: {
+        ...responseData,
+        verified: globalUser ? globalUser.active : false,
+        active: globalUser ? globalUser.active : false,
+        orgDetails: { orgId: req.orgId }
+      }
+    });
   } catch (error) {
     res.status(500).json({ err: error.message });
   }
 }
 
 async function getSingleStudent(req, res) {
-  const { student } = connectTodb(req.tenantDB);
+  const { student, progress } = connectTodb(req.tenantDB);
   if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   try {
     const { studentId } = req.params;
     const findStudent = await student.findOne({ globalId: studentId });
     if (!findStudent) throw new Error('Please select valid student');
-    res.status(200).json({ data: findStudent });
+
+    if (progress && findStudent._id) {
+      const studentProgress = await progress.find(
+        { studentId: findStudent._id.toString() },
+        { projection: { testId: 1, status: 1, scoreData: 1, createdAt: 1, testEndedAt: 1, attemptGeneration: 1 } }
+      ).toArray();
+      
+      if (studentProgress && studentProgress.length > 0) {
+        findStudent.progress = studentProgress;
+      }
+    }
+
+    res.status(200).json({ data: { ...findStudent, orgDetails: { orgId: req.orgId } } });
   } catch (error) {
     res.status(500).json({ err: error.message });
   }

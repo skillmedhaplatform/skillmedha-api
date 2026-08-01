@@ -11,6 +11,7 @@ const { mandatory: authenticate } = require("../../../shared/middleware/auth.mid
 const { selectTenantDB } = require("../../../shared/middleware/selectTenantDB.middleware");
 const { connectTodb } = require("../../../shared/db/connection");
 const { mainDBusers, categories } = require("../../../shared/db/connection").getGlobalCollections();
+const { archiveAndDeleteOne } = require("../../../shared/utils/archive.service");
 
 const secretToken = process.env.CRYPTOSECRET;
 
@@ -357,5 +358,53 @@ module.exports.getUsersByOrgPaginated = async (req, res) => {
       success: false,
       error: error.message,
     });
+  }
+};
+
+module.exports.deleteHr = async (req, res) => {
+  try {
+    if (!req.isAuth) {
+      return res.status(401).json({ err: "User not authorised" });
+    }
+    const { hrId } = req.params;
+    const { orgId } = req.query;
+    if (!orgId) {
+      return res.status(400).json({ err: "orgId query parameter is required" });
+    }
+
+    const { getTenantDB } = require("../../../shared/db/connection");
+    const db = await getTenantDB(orgId, 5);
+    const usersCollection = db.collection("users");
+
+    const { ObjectId } = mongoDB;
+    let query = { globalId: hrId };
+    if (ObjectId.isValid(hrId)) {
+      query = { $or: [{ globalId: hrId }, { _id: new ObjectId(hrId) }] };
+    }
+
+    const findUser = await usersCollection.findOne(query);
+
+    if (!findUser) throw new Error("HR user not registered");
+
+    const archiveResult = await archiveAndDeleteOne(usersCollection, { _id: findUser._id }, {
+      deletedBy: req.userID || null,
+      reason: req.body?.reason || null,
+    });
+
+    if (archiveResult.deletedCount === 0) {
+      throw new Error("Failed to delete HR user after archival");
+    }
+
+    const globalIdToFind = findUser.globalId || hrId;
+    if (globalIdToFind && ObjectId.isValid(globalIdToFind)) {
+      await archiveAndDeleteOne(mainDBusers, { _id: new ObjectId(globalIdToFind) }, {
+        deletedBy: req.userID || null,
+        reason: req.body?.reason || null,
+      });
+    }
+
+    res.status(200).json({ msg: "HR user deleted successfully", data: archiveResult.deletedDocument });
+  } catch (error) {
+    res.status(500).json({ err: error.message });
   }
 };
