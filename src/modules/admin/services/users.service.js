@@ -89,10 +89,8 @@ function sanitizeName(name) {
 app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    console.log("[LOGIN DEBUG] Request Body:", { email });
 
     const findUser = await mainDBusers.findOne({ email: email.toLowerCase() });
-    console.log("[LOGIN DEBUG] Found User:", findUser ? findUser._id : null);
 
     if (!findUser?._id) throw new Error("User not registered");
     if (!findUser?.active)
@@ -100,6 +98,48 @@ app.post("/login", async (req, res) => {
 
     const compare = await bcrypt.compare(password, findUser.password);
     if (!compare) throw new Error("password incorrect");
+
+    // ===== TENANT RECORD VERIFICATION =====
+    // The mainDBusers entry alone isn't sufficient — the user must also exist
+    // in their org's tenant DB (e.g. the "student" collection under orgId
+    // codin_687106567ba5c99b1b899a5e), otherwise login must be rejected.
+    if (findUser.orgId) {
+      const org = await organisation.findOne({ orgId: findUser.orgId });
+      if (org && org.active === false && findUser.type !== "admin") {
+        throw new Error(
+          "Your organization's account is currently deactivated. Please contact the administrator."
+        );
+      }
+
+      const tenantDB = await getTenantDB(findUser.orgId);
+      const { student, tpo, users } = connectTodb(tenantDB);
+
+      const tenantCollection =
+        findUser.type === "student"
+          ? student
+          : findUser.type === "college"
+          ? tpo
+          : findUser.type === "company" || findUser.type === "users"
+          ? users
+          : null;
+
+      if (tenantCollection) {
+        const tenantUser = await tenantCollection.findOne({
+          email: findUser.email.toLowerCase(),
+        });
+        if (!tenantUser) {
+          // Deactivate in mainDBusers so subsequent login attempts fail fast
+          // on the `active` check above instead of re-querying the tenant DB.
+          await mainDBusers.updateOne(
+            { _id: findUser._id },
+            { $set: { active: false } }
+          );
+          throw new Error(
+            "Account Deactivated Please contact site administrator"
+          );
+        }
+      }
+    }
 
     // ===== LOGIN STREAK LOGIC =====
     const today = new Date();
@@ -137,7 +177,7 @@ app.post("/login", async (req, res) => {
       orgId: findUser.orgId,
       loginStreak,
     };
-
+console.log(loginData)
     const token = jwt.sign(loginData, process.env.JWT_SECRET);
 
     await mainDBusers.updateOne(
@@ -151,7 +191,6 @@ app.post("/login", async (req, res) => {
         },
       }
     );
-    console.log(loginData);
 
     res.status(200).send({
       msg: "loggedin successfully",
@@ -196,7 +235,7 @@ app.post("/regiterMainDBUser", async (req, res) => {
     });
     switch (type) {
       case "college": {
-        db.collection("tpo").insertOne({
+        await db.collection("tpo").insertOne({
           email: email.toLowerCase(),
           password: hash,
           userName,
@@ -208,7 +247,7 @@ app.post("/regiterMainDBUser", async (req, res) => {
         break;
       }
       case "student": {
-        db.collection("student").insertOne({
+        await db.collection("student").insertOne({
           email: email.toLowerCase(),
           password: hash,
           userName,
@@ -220,7 +259,7 @@ app.post("/regiterMainDBUser", async (req, res) => {
         break;
       }
       case "company": {
-        db.collection("users").insertOne({
+        await db.collection("users").insertOne({
           email: email.toLowerCase(),
           password: hash,
           userName,
@@ -232,7 +271,7 @@ app.post("/regiterMainDBUser", async (req, res) => {
         break;
       }
       case "users": {
-        db.collection("users").insertOne({
+        await db.collection("users").insertOne({
           email: email.toLowerCase(),
           password: hash,
           userName,
@@ -702,6 +741,27 @@ const sendMail = async (to, subject, text) => {
   });
 };
 
+const getPublicBaseUrl = (req) => {
+  const configuredBaseUrl =
+    process.env.RESET_PASSWORD_BASE_URL ||
+    process.env.API_PUBLIC_URL ||
+    process.env.PUBLIC_BASE_URL;
+
+  if (configuredBaseUrl) {
+    return configuredBaseUrl.replace(/\/$/, "");
+  }
+
+  // Behind a reverse proxy / tunnel (Azure Container Apps, ngrok, etc.) the
+  // Host the client actually reached is in x-forwarded-host, not req.host —
+  // without this, links would resolve to the proxy's internal address.
+  const forwardedProto = req.get("x-forwarded-proto");
+  const forwardedHost = req.get("x-forwarded-host");
+  const protocol = forwardedProto || req.protocol || "https";
+  const host = forwardedHost || req.get("host");
+
+  return `${protocol}://${host}`;
+};
+
 app.post("/forgotStudentPassword", async (req, res) => {
   const { email, type } = req.body;
 
@@ -724,7 +784,7 @@ app.post("/forgotStudentPassword", async (req, res) => {
       }
     );
 
-    const resetUrl = `https://gql.skillmedha.com/reset-password?token=${token}`;
+    const resetUrl = `${getPublicBaseUrl(req)}/reset-password?token=${token}`;
 
     const message = `You requested a password reset. Click the link below:\n\n${resetUrl}`;
 
@@ -2192,6 +2252,49 @@ app.put("/updateOrganisationAILimit/:orgId", authenticate, async (req, res) => {
   }
 });
 
+app.put("/toggleOrganizationStatus/:orgId", authenticate, async (req, res) => {
+  try {
+    const { orgId } = req.params;
+    const { active } = req.body;
+    const { role } = req;
+
+    if (role !== "ADMIN") {
+      return res.status(403).json({
+        err: "User not authorized to update organisation",
+      });
+    }
+
+    const orgData = await organisation.findOne({ orgId: orgId });
+    if (!orgData) {
+      return res.status(404).json({
+        err: "Organization not found",
+      });
+    }
+
+    const result = await organisation.updateOne(
+      { orgId: orgId },
+      { $set: { active: active } }
+    );
+
+    if (result.modifiedCount === 0 && orgData.active === active) {
+      return res.status(200).json({
+        msg: "Organization status is already up to date",
+      });
+    }
+
+    res.status(200).json({
+      msg: `Organization successfully ${active ? 'activated' : 'deactivated'}`,
+      active: active
+    });
+  } catch (error) {
+    console.error("Error toggling organization status:", error);
+    res.status(500).json({
+      err: "Internal server error",
+      message: error.message,
+    });
+  }
+});
+
 app.delete("/deleteOrginaztion/:orgId", authenticate, async (req, res) => {
   try {
     const { orgId } = req.params;
@@ -2293,6 +2396,74 @@ app.delete("/deleteOrginaztion/:orgId", authenticate, async (req, res) => {
       err: "Internal server error",
       message: error.message,
     });
+  }
+});
+
+app.put("/toggleHrStatus/:hrId", authenticate, async (req, res) => {
+  try {
+    const { hrId } = req.params;
+    const { active } = req.body;
+    const { role } = req;
+
+    if (role !== "ADMIN") {
+      return res.status(403).json({
+        err: "User not authorized to update HR status",
+      });
+    }
+
+    const findUser = await mainDBusers.findOne({
+      _id: new mongoDB.ObjectId(hrId),
+    });
+
+    if (!findUser) throw new Error("User not registered");
+
+    const result = await mainDBusers.updateOne(
+      { _id: new mongoDB.ObjectId(hrId) },
+      { $set: { active: active } }
+    );
+
+    if (findUser.orgId) {
+      const db = await getTenantDB(findUser.orgId, 5);
+      const usersCollection = db.collection('users');
+      await usersCollection.updateOne(
+        { globalId: hrId },
+        { $set: { active: active } }
+      );
+    }
+
+    res.status(200).json({
+      msg: `HR successfully ${active ? 'activated' : 'deactivated'}`,
+      active: active
+    });
+  } catch (error) {
+    console.error("Error toggling HR status:", error);
+    res.status(500).json({
+      err: error.message,
+    });
+  }
+});
+
+app.post("/getUsersFromIds", authenticate, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids)) {
+      return res.status(400).json({ error: "Invalid ids array" });
+    }
+
+    const objectIds = ids
+      .filter((id) => mongoDB.ObjectId.isValid(id))
+      .map((id) => new mongoDB.ObjectId(id));
+
+    const users = await mainDBusers.find({
+      _id: { $in: objectIds }
+    }).project({ userName: 1, firstName: 1, lastName: 1, name: 1, email: 1, role: 1, type: 1 }).toArray();
+
+    res.status(200).json({
+      data: users
+    });
+  } catch (error) {
+    console.error("Error fetching users by ids:", error);
+    res.status(500).json({ error: error.message });
   }
 });
 

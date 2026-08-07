@@ -303,12 +303,13 @@ app.get("/getStudentCreds", authenticate, selectTenantDB, async (req, res) => {
             }
           } else {
             // Handle local jobs
+            const localJobIdStr = appliedJobObj.id ? appliedJobObj.id.toString() : "";
             if (
-              typeof appliedJobObj.id === "string" &&
-              appliedJobObj.id.match(/^[0-9a-fA-F]{24}$/)
+              localJobIdStr.length === 24 &&
+              localJobIdStr.match(/^[0-9a-fA-F]{24}$/)
             ) {
               jobDetails = await job.findOne({
-                _id: new mongoDB.ObjectId(appliedJobObj.id),
+                _id: new mongoDB.ObjectId(localJobIdStr),
               });
 
               if (jobDetails) {
@@ -377,6 +378,8 @@ app.get("/getStudentCreds", authenticate, selectTenantDB, async (req, res) => {
     });
 
     // Return student data with enhanced appliedJobs
+    const fs = require('fs');
+    fs.writeFileSync('/tmp/appliedJobs.json', JSON.stringify(enhancedAppliedJobs, null, 2));
     res.status(200).json({
       data: {
         ...findStudent,
@@ -936,24 +939,78 @@ app.post(
   },
 );
 
+// app.post(
+//   "/deleteStudent/:userID",
+//   authenticate,
+//   selectTenantDB,
+//   async (req, res) => {
+//     const { student, departments } = connectTodb(req.tenantDB);
+//     if (!req.tenantDB)
+//       return res.status(500).json({ error: "No tenant DB available" });
+//     try {
+//       const { userID } = req.params;
+//       const { departmentId } = req.body;
+//       const covId = new mongoDB.ObjectId(userID);
+
+//       const findStudent = await student.findOne({ globalId: userID });
+
+//       if (!findStudent?._id) throw new Error("Student not found to delete");
+
+//       const archiveResult = await archiveAndDeleteOne(student, { _id: findStudent?._id }, {
+//         deletedBy: req.userID || null,
+//         reason: req.body.reason || null,
+//       });
+
+//       if (archiveResult.deletedCount === 0) {
+//         throw new Error('Failed to delete student after archival');
+//       }
+
+//       await archiveAndDeleteOne(mainDBusers, { _id: new mongoDB.ObjectId(userID) }, {
+//         deletedBy: req.userID || null,
+//         reason: req.body.reason || null,
+//       });
+
+//       await departments.updateOne(
+//         { _id: new mongoDB.ObjectId(departmentId) },
+//         {
+//           $pull: { students: findStudent._id.toString() },
+//         },
+//       );
+//       const { mainDBusers } = getGlobalCollections();
+//       await mainDBusers.updateOne(
+//         { _id: deletedStudent.mainUserId },
+//         { $set: { active: false } }
+//       );
+//       res
+//         .status(200)
+//         .send({ msg: "Student deleted successfully", data: archiveResult.deletedDocument });
+//     } catch (error) {
+//       res.status(500).send({ err: error.message });
+//     }
+//   },
+// );
 app.post(
   "/deleteStudent/:userID",
   authenticate,
   selectTenantDB,
   async (req, res) => {
+    if (!req.tenantDB) return res.status(500).json({ error: "No tenant DB available" });
     const { student, departments } = connectTodb(req.tenantDB);
-    if (!req.tenantDB)
-      return res.status(500).json({ error: "No tenant DB available" });
+    const { mainDBusers } = getGlobalCollections();
+    console.log('here getiing')
     try {
       const { userID } = req.params;
       const { departmentId } = req.body;
-      const covId = new mongoDB.ObjectId(userID);
 
+      // Find student in tenant DB
       const findStudent = await student.findOne({ globalId: userID });
+      if (!findStudent) return res.status(404).json({ success: false, message: "Student not found" });
 
-      if (!findStudent?._id) throw new Error("Student not found to delete");
+      // Use email as common key across collections
+      const studentEmail = findStudent.email;
 
-      const archiveResult = await archiveAndDeleteOne(student, { _id: findStudent?._id }, {
+      // Archive + delete from tenant students collection
+      const archiveResult = await archiveAndDeleteOne(student, { _id: findStudent._id }, {
         deletedBy: req.userID || null,
         reason: req.body.reason || null,
       });
@@ -962,27 +1019,24 @@ app.post(
         throw new Error('Failed to delete student after archival');
       }
 
-      await archiveAndDeleteOne(mainDBusers, { _id: new mongoDB.ObjectId(userID) }, {
-        deletedBy: req.userID || null,
-        reason: req.body.reason || null,
-      });
-
+      // Remove student from department using email
       await departments.updateOne(
         { _id: new mongoDB.ObjectId(departmentId) },
-        {
-          $pull: { students: findStudent._id.toString() },
-        },
+        { $pull: { students: studentEmail } }
       );
 
-      res
-        .status(200)
-        .send({ msg: "Student deleted successfully", data: archiveResult.deletedDocument });
-    } catch (error) {
-      res.status(500).send({ err: error.message });
-    }
-  },
-);
+      // Set active: false in main users DB using email
+      await mainDBusers.updateOne(
+        { email: studentEmail },
+        { $set: { active: false } }
+      );
 
+      res.status(200).json({ success: true, message: "Student deleted successfully", data: archiveResult.deletedDocument });
+    } catch (error) {
+      res.status(500).json({ err: error.message });
+    }
+  }
+);
 app.post(
   "/deleteAllStudent/:deptId",
   authenticate,

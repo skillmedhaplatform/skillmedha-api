@@ -657,54 +657,115 @@ module.exports.getOneJob = async (req, res) => {
 
     if (!findJob) throw new Error("Please select a valid job");
 
-    // Get colleges array from the found job document
-    const { colleges = [] } = findJob;
+    // Get colleges array from the found job document, with fallback to assignedJob collection
+    let colleges = Array.isArray(findJob.colleges) ? [...findJob.colleges] : [];
+    if (colleges.length === 0) {
+      try {
+        const assignedJobDocs = await assignedJob.find({ jobId }).toArray();
+        colleges = assignedJobDocs.map((doc) => doc.companyOrgId).filter(Boolean);
+      } catch (err) {
+        console.error("Error fetching assignedJob colleges fallback:", err.message);
+      }
+    }
 
     // Fetch student data from all organizations
     let studentData = [];
     if (findJob.applicants && findJob.applicants.length > 0) {
-      // Get students from local DB first
-      const localStudents = await student
-        .find({
-          _id: { $in: findJob.applicants.map((id) => new ObjectId(id)) },
-        })
-        .toArray();
+      const validApplicantObjectIds = findJob.applicants
+        .filter((id) => id && ObjectId.isValid(id))
+        .map((id) => new ObjectId(id));
 
-      const localStudentIds = localStudents.map((s) => s._id.toString());
-      studentData.push(...localStudents);
+      if (validApplicantObjectIds.length > 0) {
+        // Get students from local DB first
+        const localStudents = await student
+          .find({
+            _id: { $in: validApplicantObjectIds },
+          })
+          .toArray();
 
-      // Find remaining applicant IDs not found locally
-      let remainingApplicantIds = findJob.applicants.filter(
-        (id) => !localStudentIds.includes(id)
-      );
+        const localStudentIds = localStudents.map((s) => s._id.toString());
+        studentData.push(...localStudents);
 
-      // Search for remaining students in colleges organizations
-      for (const collegeOrgId of colleges) {
-        if (remainingApplicantIds.length === 0) break;
+        // Find remaining applicant IDs not found locally
+        let remainingApplicantIds = findJob.applicants.filter(
+          (id) => !localStudentIds.includes(id) && ObjectId.isValid(id)
+        );
 
-        try {
-          const collegeOrgIdDb = await getTenantDB(collegeOrgId);
-          const { student: extStudentCollection } = connectTodb(collegeOrgIdDb);
-          const extStudents = await extStudentCollection
-            .find({
-              _id: { $in: remainingApplicantIds.map((id) => new ObjectId(id)) },
-            })
-            .toArray();
+        // Search for remaining students in colleges organizations
+        for (const collegeOrgId of colleges) {
+          if (remainingApplicantIds.length === 0) break;
 
-          if (extStudents.length > 0) {
-            studentData.push(...extStudents);
+          try {
+            const collegeOrgIdDb = await getTenantDB(collegeOrgId);
+            const { student: extStudentCollection } = connectTodb(collegeOrgIdDb);
+            const extStudents = await extStudentCollection
+              .find({
+                _id: { $in: remainingApplicantIds.map((id) => new ObjectId(id)) },
+              })
+              .toArray();
 
-            // Remove found student IDs from remaining list
-            const foundIds = extStudents.map((s) => s._id.toString());
-            remainingApplicantIds = remainingApplicantIds.filter(
-              (id) => !foundIds.includes(id)
+            if (extStudents.length > 0) {
+              studentData.push(...extStudents);
+
+              // Remove found student IDs from remaining list
+              const foundIds = extStudents.map((s) => s._id.toString());
+              remainingApplicantIds = remainingApplicantIds.filter(
+                (id) => !foundIds.includes(id)
+              );
+            }
+          } catch (error) {
+            console.error(
+              `Failed to fetch students from org ${collegeOrgId}:`,
+              error.message
             );
           }
-        } catch (error) {
-          console.error(
-            `Failed to fetch students from org ${collegeOrgId}:`,
-            error.message
-          );
+        }
+
+        // Global Fallback: If any applicant IDs are still remaining, search across all active tenant DBs
+        if (remainingApplicantIds.length > 0) {
+          try {
+            const { getSharedMongoClient } = require("../../shared/db/connection");
+            const mongoClient = await getSharedMongoClient();
+            const adminDb = mongoClient.db("admin");
+            const dbs = await adminDb.admin().listDatabases();
+            for (const dbInfo of dbs.databases) {
+              if (remainingApplicantIds.length === 0) break;
+              if (
+                dbInfo.name.startsWith("system.") ||
+                dbInfo.name === "admin" ||
+                dbInfo.name === "local" ||
+                dbInfo.name === "config" ||
+                dbInfo.name === req.tenantDB?.databaseName ||
+                colleges.includes(dbInfo.name)
+              ) {
+                continue;
+              }
+              try {
+                const tenantDb = mongoClient.db(dbInfo.name);
+                const collections = await tenantDb.listCollections({ name: "student" }).toArray();
+                if (collections.length > 0) {
+                  const extStudents = await tenantDb
+                    .collection("student")
+                    .find({
+                      _id: { $in: remainingApplicantIds.map((id) => new ObjectId(id)) },
+                    })
+                    .toArray();
+
+                  if (extStudents.length > 0) {
+                    studentData.push(...extStudents);
+                    const foundIds = extStudents.map((s) => s._id.toString());
+                    remainingApplicantIds = remainingApplicantIds.filter(
+                      (id) => !foundIds.includes(id)
+                    );
+                  }
+                }
+              } catch (e) {
+                // Ignore per-database errors
+              }
+            }
+          } catch (e) {
+            console.error("Error in global student fallback search:", e.message);
+          }
         }
       }
     }
@@ -713,16 +774,22 @@ module.exports.getOneJob = async (req, res) => {
       data: {
         ...findJob,
         isAssignedJob,
-        applicants: studentData.filter(Boolean).map((e) => ({
-          enrollementId: e?.enrollementId,
-          firstName: e?.firstName,
-          lastName: e?.lastName,
-          middleName: e?.middleName,
-          userName: e?.userName,
-          email: e?.email,
-          _id: e?._id,
-          department: e?.department || "",
-        })),
+        applicants: studentData.filter(Boolean).map((e) => {
+          const fullName = [e?.firstName, e?.middleName, e?.lastName]
+            .filter(Boolean)
+            .join(" ")
+            .trim();
+          return {
+            enrollementId: e?.enrollementId || "",
+            firstName: e?.firstName || "",
+            lastName: e?.lastName || "",
+            middleName: e?.middleName || "",
+            userName: e?.userName || fullName || e?.name || "Student",
+            email: e?.email || "",
+            _id: e?._id,
+            department: e?.department || "",
+          };
+        }),
       },
     });
   } catch (error) {
@@ -1186,7 +1253,7 @@ module.exports.getAllJobs = async (req, res) => {
     if (isNaN(page) || page < 1) page = 1;
     if (isNaN(limit) || limit < 1) limit = 20;
 
-    console.log("Query params:", { search, filters, page, limit });
+    // console.log("Query params:", { search, filters, page, limit });
 
     // Define searchable fields for the search parameter
     const searchableFields = [
@@ -1277,17 +1344,17 @@ module.exports.getAllJobs = async (req, res) => {
       matchStage[key] = { $regex: filters[key], $options: "i" };
     }
 
-    console.log("MongoDB matchStage:", JSON.stringify(matchStage, null, 2));
+    // console.log("MongoDB matchStage:", JSON.stringify(matchStage, null, 2));
 
     // Get local jobs with MongoDB filtering
     const localJobs = await job.find(matchStage).toArray();
-    console.log("Local jobs found:", localJobs.length);
+    // console.log("Local jobs found:", localJobs.length);
 
     // Get assigned jobs
     let assignedJobs = [];
     try {
       assignedJobs = await assignedJob.find({}).toArray();
-      console.log("Assigned job references found:", assignedJobs.length);
+      // console.log("Assigned job references found:", assignedJobs.length);
     } catch (error) {
       console.warn(
         "assignedJob collection not found or inaccessible:",
@@ -1308,7 +1375,7 @@ module.exports.getAllJobs = async (req, res) => {
         });
 
         if (!jobDetail) {
-          console.log(`Job ${assignedJobDoc.jobId} not found in company DB`);
+          // console.log(`Job ${assignedJobDoc.jobId} not found in company DB`);
           continue;
         }
 
@@ -1316,9 +1383,9 @@ module.exports.getAllJobs = async (req, res) => {
         const searchMatch = matchesSearch(jobDetail);
         const filterMatch = matchesFilters(jobDetail);
 
-        console.log(
-          `Job ${assignedJobDoc.jobId}: searchMatch=${searchMatch}, filterMatch=${filterMatch}`
-        );
+        // console.log(
+        //   `Job ${assignedJobDoc.jobId}: searchMatch=${searchMatch}, filterMatch=${filterMatch}`
+        // );
 
         if (searchMatch && filterMatch) {
           assignedJobDetails.push({
@@ -1335,7 +1402,7 @@ module.exports.getAllJobs = async (req, res) => {
       }
     }
 
-    console.log("Assigned jobs after filtering:", assignedJobDetails.length);
+    // console.log("Assigned jobs after filtering:", assignedJobDetails.length);
 
     // Combine all jobs
     const allJobs = [
@@ -1343,7 +1410,7 @@ module.exports.getAllJobs = async (req, res) => {
       ...assignedJobDetails,
     ];
 
-    console.log("Total jobs before org details:", allJobs.length);
+    // console.log("Total jobs before org details:", allJobs.length);
 
     // Collect all unique organization IDs from jobs
     const orgIds = new Set();
@@ -1440,10 +1507,10 @@ module.exports.getAllJobs = async (req, res) => {
     const totalDocs = jobsWithCollegeNames.length;
     const totalPages = Math.ceil(totalDocs / limit);
 
-    console.log("Final result:", {
-      totalDocs,
-      paginatedJobs: paginatedJobs.length,
-    });
+    // console.log("Final result:", {
+    //   totalDocs,
+    //   paginatedJobs: paginatedJobs.length,
+    // });
 
     res.status(200).json({
       data: paginatedJobs,

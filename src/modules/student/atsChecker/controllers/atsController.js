@@ -144,8 +144,9 @@ const analyzeResume = async (req, res) => {
       error.message?.includes("Unsupported file") ||
       error.message?.includes("Could not extract") ||
       error.message?.includes("empty");
+    const isQuotaError = error.message?.includes("usage limit");
 
-    return res.status(isClientError ? 400 : 500).json({
+    return res.status(isQuotaError ? 429 : isClientError ? 400 : 500).json({
       success: false,
       message: error.message || "Failed to analyze resume. Please try again.",
     });
@@ -258,8 +259,9 @@ const analyzeExistingResume = async (req, res) => {
       error.message?.includes("Unsupported file") ||
       error.message?.includes("Could not extract") ||
       error.message?.includes("empty");
+    const isQuotaError = error.message?.includes("usage limit");
 
-    return res.status(isClientError ? 400 : 500).json({
+    return res.status(isQuotaError ? 429 : isClientError ? 400 : 500).json({
       success: false,
       message: error.message || "Failed to analyze resume. Please try again.",
     });

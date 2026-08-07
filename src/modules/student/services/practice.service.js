@@ -1,7 +1,7 @@
-const express = require("express");
+ const express = require("express");
 const { json, urlencoded } = require("express");
 const { ObjectId } = require("mongodb");
-const { connectTodb } = require("../../../shared/db/connection");
+const { connectTodb, getGlobalCollections } = require("../../../shared/db/connection");
 const { getTenantDB } = require("../../../shared/db/connection");
 const { archiveAndDeleteOne } = require("../../../shared/utils/archive.service");
 const XLSX = require("xlsx");
@@ -418,9 +418,10 @@ module.exports.createQuestion = async (req, res) => {
 };
 
 module.exports.bulkUploadPracQuestions = async (req, res) => {
-  const { questions } = connectTodb(req.tenantDB);
+  const { questions: tenantQuestions } = connectTodb(req.tenantDB);
+  const { questions: globalQuestions } = getGlobalCollections();
 
-  if (!req.tenantDB) {
+  if (!req.tenantDB && !req.query.skillId) {
     return res.status(500).json({ error: "No tenant DB available" });
   }
 
@@ -429,11 +430,10 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
       return res.status(400).json({ err: "Please upload a file" });
     }
 
-    const { subjectId } = req.query;
-    const { topicId, subTopicId, isTest } = req.query;
+    const { subjectId, skillId, topicId, subTopicId, isTest } = req.query;
 
-    if (!subjectId) {
-      return res.status(400).json({ err: "subjectId is required as query parameter" });
+    if (!subjectId && !skillId) {
+      return res.status(400).json({ err: "subjectId or skillId is required as query parameter" });
     }
 
     // Read Excel/CSV file
@@ -458,6 +458,8 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
       explanation: "explanation",
       explaination: "explanation",
       solution: "explanation",
+      difficulty: "difficulty",
+      level: "difficulty",
       scorepoints: "scorePoints",
       score_points: "scorePoints",
       score: "scorePoints",
@@ -550,11 +552,7 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
             [foundOption.key]: true
           };
         } else {
-          // Fallback: if no match found but we have an answer, just put it (though schema might not like it)
-          // or maybe default to option 1? No, better to leave empty or try best effort.
-          // For now, let's assume if it's not found, maybe it's just raw text?
-          // But existing schema uses { "option 1": true } structure.
-          // Let's just default to null if not found to avoid crashing
+          answer.singleChoice = { "option 1": true };
         }
       } else if (questionType === "True/False") {
         // Existing schema likely uses same structure or just "answer": true/false?
@@ -580,14 +578,17 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
 
       // 4. Construct Final Object
       const questionObj = {
-        subjectId: new ObjectId(subjectId),
+        ...(subjectId && { subjectId: new ObjectId(subjectId) }),
+        ...(skillId && { refId: skillId }),
         questionType: questionType,
         questionContent: questionContent, // Nested structure
         answer: answer,                   // Nested structure
         scoreSettings: scoreSettings,     // Nested structure
         resources: {},
-        type: "practice",
+        difficulty: (questionData.difficulty || "medium").toLowerCase(),
+        type: skillId ? "skill" : "practice",
         createdAt: new Date().getTime(),
+        createdBy: req.userID,
         isTest: isTest === "true" || isTest === true,
       };
 
@@ -621,10 +622,13 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
       insertedQuestions.push(questionObj);
     }
 
+    // Target correct collection (Global for skills, Tenant for practice)
+    const targetCollection = skillId ? globalQuestions : tenantQuestions;
+
     // Bulk insert all questions
     let insertResult = null;
     if (insertedQuestions.length > 0) {
-      insertResult = await questions.insertMany(insertedQuestions, {
+      insertResult = await targetCollection.insertMany(insertedQuestions, {
         ordered: false,
       });
     }
@@ -633,12 +637,9 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
       message: "Questions uploaded successfully",
       totalRows: questionsData.length,
       insertedCount: insertedQuestions.length,
-      insertedIds: insertResult
-        ? Object.values(insertResult.insertedIds).map((id) => id.toString())
-        : [],
-      isTest: isTest === "true" || isTest === true,
     });
   } catch (error) {
+    console.error("Error in bulkUploadPracQuestions:", error);
     res.status(500).json({ err: error.message });
   } finally {
     // Delete the uploaded file after processing

@@ -31,8 +31,8 @@ const SingleTestQuery = `query Test($testId: String) {
           sno
           questionScore
           resources
-        }
       }
+      attemptGeneration
     }
   }
 }`;

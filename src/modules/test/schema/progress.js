@@ -7,6 +7,7 @@ const typeDefs = {
                 testId : String
                 response : JSON
                 flagged : JSON
+                marked: JSON
                 studentId : String
                 scoreData: JSON
                 capturedImage : String
@@ -15,6 +16,7 @@ const typeDefs = {
                 studentData : JSON
                 createdAt : String
                 studentActivity: JSON
+                attemptGeneration: Int
             }
     
         

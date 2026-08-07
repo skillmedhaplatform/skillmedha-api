@@ -17,8 +17,8 @@ const {
 } = require("../db/connection").getGlobalCollections();
 
 const openai = new OpenAI({
-  organization: process.env.OPENAI_ORGID,
-  project: process.env.OPENAI_PROJID,
+  apiKey: process.env.OPENAI_API_KEY,
+  // project: process.env.OPENAI_PROJID,
 });
 
 /*****************************************

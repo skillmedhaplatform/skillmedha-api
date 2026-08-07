@@ -43,7 +43,8 @@ module.exports = {
               snapShotTechnology : String
               facialRecognitionTechnology: String
               testEvaluationType : String
-              
+              resultsConfig: JSON
+              attemptGeneration: Int
           }   
           
             type TestRes {

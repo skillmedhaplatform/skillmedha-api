@@ -15,6 +15,9 @@ const {
   payment,
   paymentConfigCollection,
 } = require("../../../shared/db/connection").getGlobalCollections();
+const { getTenantDB, connectTodb } = require("../../../shared/db/connection");
+const { mandatory } = require("../../../shared/middleware/auth.middleware");
+const { selectTenantDB } = require("../../../shared/middleware/selectTenantDB.middleware");
 const sucessMail = require("../../../shared/utils/sucessMail");
 
 const router = express.Router();
@@ -619,6 +622,254 @@ router.post("/getPaymentID", async (req, res) => {
     res.send(data);
   } catch (error) {
     res.send(error);
+  }
+});
+
+// ─── Cart checkout (multi-course, single Razorpay order) ──────────────────────
+
+async function resolveCartCourseType(courseId, tenantDB) {
+  const { internships: tenantCourses } = connectTodb(tenantDB);
+  let course = await tenantCourses.findOne(
+    { _id: new mongoDB.ObjectId(courseId) },
+    { projection: { type: 1 } }
+  );
+  if (course) return course.type || "course";
+
+  const kSquareDB = await getTenantDB("KSquare");
+  const { internships: kCourses } = connectTodb(kSquareDB);
+  course = await kCourses.findOne(
+    { _id: new mongoDB.ObjectId(courseId) },
+    { projection: { type: 1 } }
+  );
+  return course?.type || "course";
+}
+
+router.post("/cart/createOrder", mandatory, selectTenantDB, async (req, res) => {
+  try {
+    const { cart } = connectTodb(req.tenantDB);
+    const cartDoc = await cart.findOne({ student: req.userID });
+
+    if (!cartDoc?.items?.length) {
+      return res.status(400).json({ error: "Cart is empty" });
+    }
+
+    const student = await mainDBusers.findOne({
+      _id: new mongoDB.ObjectId(req.userID),
+    });
+    if (!student) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    const alreadyEnrolledIds = new Set(
+      (student.enrolledData || []).map((e) => e.refId)
+    );
+    const pendingItems = cartDoc.items.filter(
+      (item) => !alreadyEnrolledIds.has(item.courseId)
+    );
+
+    if (!pendingItems.length) {
+      return res
+        .status(400)
+        .json({ error: "All courses in cart are already purchased" });
+    }
+
+    const itemsWithType = await Promise.all(
+      pendingItems.map(async (item) => ({
+        courseId: item.courseId,
+        price: item.price,
+        discountedPrice: item.discountedPrice,
+        type: await resolveCartCourseType(item.courseId, req.tenantDB),
+      }))
+    );
+
+    const totalAmount = itemsWithType.reduce(
+      (sum, i) => sum + (i.discountedPrice ?? i.price ?? 0),
+      0
+    );
+    const courseIds = itemsWithType.map((i) => i.courseId);
+
+    if (totalAmount === 0) {
+      await mainDBusers.updateOne(
+        { _id: student._id },
+        {
+          $push: {
+            subscriptions: { $each: courseIds },
+            installments: {
+              $each: itemsWithType.map((i) => ({
+                courseId: i.courseId,
+                firstInstallment: true,
+                secondInstallment: false,
+                amountCharged: 0,
+              })),
+            },
+            enrolledData: {
+              $each: itemsWithType.map((i) => ({
+                refId: i.courseId,
+                createdAt: new Date(),
+                active: true,
+                type: i.type,
+              })),
+            },
+          },
+        }
+      );
+
+      await cart.updateOne({ student: req.userID }, { $set: { items: [] } });
+
+      return res.status(200).json({ orderId: null, enrolled: true, courseIds });
+    }
+
+    const configData = await paymentConfigCollection.find({}).toArray();
+    const keyId = configData[0]?.keyId || process.env.RZP_ID;
+
+    const order = await instance.orders.create({
+      amount: totalAmount * 100,
+      currency: "INR",
+      receipt: uuidv4(),
+      notes: {
+        items: JSON.stringify(
+          itemsWithType.map((i) => ({ courseId: i.courseId, type: i.type }))
+        ),
+        userID: req.userID,
+        orgId: req.orgId,
+      },
+    });
+
+    return res.status(200).json({
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      keyId,
+    });
+  } catch (error) {
+    console.error("Cart createOrder error:", error);
+    res.status(500).json({ error: "Failed to create cart order" });
+  }
+});
+
+router.post("/cart/verify", mandatory, selectTenantDB, async (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } =
+      req.body;
+
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return res
+        .status(400)
+        .json({ error: "Missing payment verification fields" });
+    }
+
+    const body = razorpay_order_id + "|" + razorpay_payment_id;
+    const generated_signature = Crypto.createHmac("sha256", process.env.RZP_SECRET)
+      .update(body)
+      .digest("hex");
+
+    if (generated_signature !== razorpay_signature) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid payment signature" });
+    }
+
+    const existingPayment = await payment.findOne({ orderId: razorpay_order_id });
+    if (existingPayment) {
+      return res.status(200).json({
+        success: true,
+        message: "Payment already processed",
+        enrolledCourses: existingPayment.courseIds || [],
+      });
+    }
+
+    const order = await instance.orders.fetch(razorpay_order_id);
+    let items = [];
+    try {
+      items = JSON.parse(order.notes?.items || "[]");
+    } catch (e) {
+      items = [];
+    }
+
+    if (!items.length) {
+      return res.status(400).json({ error: "No courses found for this order" });
+    }
+
+    const student = await mainDBusers.findOne({
+      _id: new mongoDB.ObjectId(order.notes.userID),
+    });
+    if (!student) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    const alreadyEnrolledIds = new Set(
+      (student.enrolledData || []).map((e) => e.refId)
+    );
+    const newItems = items.filter((i) => !alreadyEnrolledIds.has(i.courseId));
+    const courseIds = items.map((i) => i.courseId);
+    const amountCharged = order.amount / 100;
+
+    const paymentdone = await payment.insertOne({
+      orderId: razorpay_order_id,
+      paymentId: razorpay_payment_id,
+      amountCharged,
+      currency: order.currency,
+      courseIds,
+      email: student.email,
+      createdAt: new Date(),
+    });
+
+    if (newItems.length) {
+      await mainDBusers.updateOne(
+        { _id: student._id },
+        {
+          $push: {
+            payment: paymentdone.insertedId.toString(),
+            subscriptions: { $each: newItems.map((i) => i.courseId) },
+            installments: {
+              $each: newItems.map((i) => ({
+                courseId: i.courseId,
+                firstInstallment: true,
+                secondInstallment: false,
+                amountCharged,
+              })),
+            },
+            enrolledData: {
+              $each: newItems.map((i) => ({
+                refId: i.courseId,
+                createdAt: new Date(),
+                active: true,
+                type: i.type,
+              })),
+            },
+          },
+          $set: { amountCharged },
+        }
+      );
+    }
+
+    const { cart } = connectTodb(req.tenantDB);
+    await cart.updateOne({ student: req.userID }, { $set: { items: [] } });
+
+    transporters.sendMail(
+      sucessMail({
+        email: student.email,
+        notes: { name: `${student.firstName || ""} ${student.lastName || ""}`.trim() },
+      }),
+      (error, info) => {
+        if (error) {
+          console.log({ status: false, respMesg: error });
+        } else {
+          console.log({ status: true, respMesg: "Email Sent Successfully" });
+        }
+      }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Payment processed successfully",
+      enrolledCourses: courseIds,
+    });
+  } catch (error) {
+    console.error("Cart verify error:", error);
+    res
+      .status(500)
+      .json({ error: "Payment verification failed", details: error.message });
   }
 });
 

@@ -54,6 +54,7 @@ router.post('/assessments/bulkUploadQuestionstobank',           mandatory, selec
 router.post('/assessments/addBankQuestion',                     mandatory, selectTenantDB, testsSvc.addQuestionToBank);
 router.post('/assessments/sendBulkTestAccessMail',              mandatory, selectTenantDB, testsSvc.sendBulkTestAccessMailBatched);
 router.get('/assessments/getRecentTestResults/:studentId',      mandatory, selectTenantDB, testsSvc.getRecentTestResults);
+router.post('/assessments/markOneTimeResultViewed/:id',         mandatory, selectTenantDB, testsSvc.markOneTimeResultViewed);
 
 // ─── Questions Bank (TPO manages) ────────────────────────────────────────────
 router.use('/questions', mandatory, selectTenantDB, questionsSvc);

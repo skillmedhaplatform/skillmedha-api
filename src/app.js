@@ -199,7 +199,7 @@ app.post('/uploadToS3', upload.single('file'), async (req, res) => {
   }
 });
 
-app.post('/upload-resume', upload.single('resume'), async (req, res) => {
+app.post('/upload-resume', mandatory, upload.single('resume'), async (req, res) => {
   if (!req.file) return res.status(400).json({ success: false, message: 'No resume file uploaded.' });
   const { orgId } = req;
   const { uniqueName, bucketName } = req.body;

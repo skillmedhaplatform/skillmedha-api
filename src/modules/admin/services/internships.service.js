@@ -715,12 +715,12 @@ app.get("/getOneInternship/:id/:orgId", async (req, res) => {
     // Fetch last accessed information if userId is provided
     let lastAccessedData = null;
     if (userId) {
-      console.log("Fetching lastAccessed for userId:", userId, "itemId:", id);
-      console.log("LastAccessed collection exists:", !!lastAccessed);
+      // console.log("Fetching lastAccessed for userId:", userId, "itemId:", id);
+      // console.log("LastAccessed collection exists:", !!lastAccessed);
 
       // Debug: Check all records for this user
-      const allUserRecords = await lastAccessed.find({ userId: userId }).toArray();
-      console.log("All lastAccessed records for user:", allUserRecords);
+      // const allUserRecords = await lastAccessed.find({ userId: userId }).toArray();
+      // console.log("All lastAccessed records for user:", allUserRecords);
 
       // Try to find with exact match first
       lastAccessedData = await lastAccessed.findOne({
@@ -728,7 +728,7 @@ app.get("/getOneInternship/:id/:orgId", async (req, res) => {
         itemId: id,
       });
 
-      console.log("LastAccessed query result:", lastAccessedData);
+      // console.log("LastAccessed query result:", lastAccessedData);
     }
 
     res.status(200).json({
@@ -780,8 +780,8 @@ app.get("/getOneInternshipAuth/:id", async (req, res) => {
     // Allow userId from query params to override, otherwise use authenticated user
     const userId = req.query.userId || req.userID;
 
-    console.log("GET /getOneInternshipAuth - id:", id, "userId:", userId, "orgId:", req.orgId);
-    console.log("req.userID (from auth):", req.userID, "req.query.userId:", req.query.userId);
+    // console.log("GET /getOneInternshipAuth - id:", id, "userId:", userId, "orgId:", req.orgId);
+    // console.log("req.userID (from auth):", req.userID, "req.query.userId:", req.query.userId);
 
 
     // Fetch internship from KSquare database (central storage)
@@ -915,14 +915,14 @@ app.get("/getOneInternshipAuth/:id", async (req, res) => {
     // Fetch last accessed information for the authenticated user
     let lastAccessedData = null;
     if (userId) {
-      console.log("Fetching lastAccessed for userId:", userId, "itemId:", id);
+      // console.log("Fetching lastAccessed for userId:", userId, "itemId:", id);
 
       lastAccessedData = await lastAccessed.findOne({
         userId: userId,
         itemId: id,
       });
 
-      console.log("LastAccessed query result:", lastAccessedData);
+      // console.log("LastAccessed query result:", lastAccessedData);
     }
 
     res.status(200).json({
@@ -2720,7 +2720,7 @@ async function resolveCourse(courseId, tenantDB) {
 
 // Helper: compute cart total
 function computeCartTotal(items = []) {
-  return items.reduce((sum, i) => sum + (i.discountedPrice ?? i.price ?? 0), 0);
+  return items.reduce((sum, i) => sum + Number(i.discountedPrice ?? i.price ?? 0), 0);
 }
 
 // Helper: re-fetch & return enriched cart (used after every mutation)
@@ -2780,8 +2780,8 @@ async function sendWishlistResponse(req, res) {
             category: course.category,
             difficulty: course.difficulty,
             type: course.type,
-            price: course.pricing?.originalPrice ?? course.price ?? 0,
-            discountedPrice: course.pricing?.finalPrice ?? course.discountedPrice ?? 0,
+            price: Number(course.pricing?.originalPrice ?? course.price ?? 0),
+            discountedPrice: Number(course.pricing?.finalPrice ?? course.discountedPrice ?? course.pricing?.currentPrice ?? course.price ?? 0),
           },
           addedAt: item.addedAt,
         };
@@ -2828,8 +2828,8 @@ app.post("/cart", authenticate, selectTenantDB, async (req, res) => {
           items: {
             _id: new mongoDB.ObjectId(),
             courseId,
-            price: course.pricing?.originalPrice ?? course.price ?? 0,
-            discountedPrice: course.pricing?.finalPrice ?? course.discountedPrice ?? 0,
+            price: Number(course.pricing?.originalPrice ?? course.price ?? 0),
+            discountedPrice: Number(course.pricing?.finalPrice ?? course.discountedPrice ?? course.pricing?.currentPrice ?? course.price ?? 0),
             addedAt: new Date().getTime(),
           },
         },

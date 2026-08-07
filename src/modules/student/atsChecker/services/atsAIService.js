@@ -15,7 +15,7 @@
  */
 
 const OpenAI = require("openai");
-const pdfParse = require("pdf-parse");
+const { PDFParse } = require("pdf-parse");
 const mammoth = require("mammoth");
 const { v4: uuidv4 } = require("uuid");
 
@@ -32,6 +32,13 @@ const FALLBACK_MODEL = process.env.OPENAI_FALLBACK_MODEL || "gpt-4o-mini";
 const MAX_RESUME_TEXT_CHARS = 8000;
 // Max characters of job description to include
 const MAX_JD_CHARS = 3000;
+// Below this many characters, a PDF's embedded text layer is considered
+// absent/unusable (e.g. an image-only or scanned PDF) and the page is sent
+// to the AI as an image instead (see renderPDFPagesAsImages below).
+const MIN_USABLE_TEXT_LENGTH = 50;
+// Cap image-based analysis to the first N pages so a pathological
+// multi-page scan can't blow up the request payload/cost.
+const MAX_VISION_PAGES = 3;
 
 // ── Text extraction helpers ────────────────────────────────────────────────
 
@@ -41,8 +48,33 @@ const MAX_JD_CHARS = 3000;
  * @returns {Promise<string>}
  */
 const extractTextFromPDF = async (buffer) => {
-  const data = await pdfParse(buffer);
-  return data.text || "";
+  const parser = new PDFParse({ data: buffer });
+  try {
+    const result = await parser.getText();
+    return result.text || "";
+  } finally {
+    await parser.destroy();
+  }
+};
+
+/**
+ * Render a PDF's pages to PNG images (as base64 data URLs) for PDFs with no
+ * usable embedded text layer — e.g. resumes exported as a rasterized image
+ * (this app's own Resume Builder does this via html2canvas + jsPDF), or
+ * genuinely scanned documents. GPT-4o reads these directly via its vision
+ * input, so no local OCR library is needed.
+ * @param {Buffer} buffer
+ * @returns {Promise<string[]>} data: URLs, one per rendered page
+ */
+const renderPDFPagesAsImages = async (buffer) => {
+  const parser = new PDFParse({ data: buffer });
+  try {
+    const screenshot = await parser.getScreenshot({ scale: 2 });
+    const pages = (screenshot.pages || []).slice(0, MAX_VISION_PAGES);
+    return pages.map((page) => `data:image/png;base64,${page.data.toString("base64")}`);
+  } finally {
+    await parser.destroy();
+  }
 };
 
 /**
@@ -179,6 +211,32 @@ const buildUserMessage = (resumeText, jobDescription) => {
 };
 
 /**
+ * Build the OpenAI user message content. Returns a plain string for normal
+ * text-based resumes (unchanged behavior), or a multimodal content array
+ * (text + page images) when the resume has no text layer and must be read
+ * via GPT-4o's vision input instead.
+ */
+const buildUserContent = (resumeText, jobDescription, images) => {
+  const hasImages = Array.isArray(images) && images.length > 0;
+
+  const textPart = buildUserMessage(
+    hasImages
+      ? "(This resume file has no embedded text layer — it was provided as an image. Read the resume content directly from the attached image(s) below and analyze it exactly as you would extracted text.)"
+      : resumeText,
+    jobDescription
+  );
+
+  if (!hasImages) {
+    return textPart;
+  }
+
+  return [
+    { type: "text", text: textPart },
+    ...images.map((url) => ({ type: "image_url", image_url: { url } })),
+  ];
+};
+
+/**
  * Compute overall score as weighted average of category scores.
  * Weights: keywords 25%, formatting 20%, sections 20%, readability 15%, actionVerbs 10%, quantification 10%
  */
@@ -239,49 +297,99 @@ const normalizeSuggestions = (suggestions) => {
 const analyzeResume = async (fileBuffer, mimeType, fileName, jobDescription = "") => {
   const startTime = Date.now();
 
+  const ext = (fileName || "").split(".").pop().toLowerCase();
+  const isPDF = mimeType === "application/pdf" || ext === "pdf";
+
   // Step 1: Extract text from file
   const extractedText = await extractResumeText(fileBuffer, mimeType, fileName);
+  const hasUsableText = !!extractedText && extractedText.trim().length >= MIN_USABLE_TEXT_LENGTH;
 
-  if (!extractedText || extractedText.trim().length < 50) {
+  // No usable text layer — likely an image-only/scanned PDF (this app's own
+  // Resume Builder exports resumes exactly this way via html2canvas + jsPDF).
+  // Render the pages and let GPT-4o's vision input read them directly
+  // instead of failing — no OCR library required.
+  let resumeImages = [];
+  if (!hasUsableText && isPDF) {
+    console.warn("[ATSAIService] PDF has no selectable text layer, falling back to image-based analysis.");
+    try {
+      resumeImages = await renderPDFPagesAsImages(fileBuffer);
+    } catch (renderErr) {
+      console.error("[ATSAIService] Failed to render PDF pages as images:", renderErr.message);
+    }
+  }
+
+  if (!hasUsableText && resumeImages.length === 0) {
+    console.error(
+      "[ATSAIService] Insufficient text extracted.",
+      {
+        fileName,
+        mimeType,
+        bufferSize: fileBuffer?.length,
+        extractedLength: extractedText?.trim().length || 0,
+        extractedPreview: extractedText?.slice(0, 200) || "",
+      }
+    );
     throw new Error(
       "Could not extract sufficient text from the resume. " +
       "Please ensure the file is not a scanned image and contains selectable text."
     );
   }
 
+  const userContent = buildUserContent(extractedText, jobDescription, resumeImages);
+
   // Step 2: Call OpenAI GPT-4o for analysis
   let response;
   let usedModel = PRIMARY_MODEL;
 
+  // Quota exhaustion is account-wide, not per-model — a fallback-model retry
+  // will hit the same wall, so it's treated as terminal, not something to
+  // silently swallow like a plain rate limit.
+  const isQuotaError = (err) =>
+    err?.status === 429 ||
+    err?.code === "insufficient_quota" ||
+    /quota/i.test(err?.message || "");
+
   try {
-    response = await openai.chat.completions.create({
-      model: PRIMARY_MODEL,
-      messages: [
-        { role: "system", content: buildSystemPrompt() },
-        { role: "user", content: buildUserMessage(extractedText, jobDescription) },
-      ],
-      temperature: 0.3,         // Lower temperature for more consistent, structured output
-      max_tokens: 4096,
-      response_format: { type: "json_object" }, // Force JSON output (GPT-4o supports this)
-    });
-  } catch (primaryError) {
-    // Fallback to cheaper model if primary fails (rate limit, quota, etc.)
-    if (primaryError.status === 429 || primaryError.code === "insufficient_quota") {
-      console.warn(`[ATSAIService] Primary model ${PRIMARY_MODEL} failed, falling back to ${FALLBACK_MODEL}`);
-      usedModel = FALLBACK_MODEL;
+    try {
       response = await openai.chat.completions.create({
-        model: FALLBACK_MODEL,
+        model: PRIMARY_MODEL,
         messages: [
           { role: "system", content: buildSystemPrompt() },
-          { role: "user", content: buildUserMessage(extractedText, jobDescription) },
+          { role: "user", content: userContent },
         ],
-        temperature: 0.3,
+        temperature: 0.3,         // Lower temperature for more consistent, structured output
         max_tokens: 4096,
-        response_format: { type: "json_object" },
+        response_format: { type: "json_object" }, // Force JSON output (GPT-4o supports this)
       });
-    } else {
-      throw primaryError;
+    } catch (primaryError) {
+      // Fallback to cheaper model on rate limit / quota errors — this only
+      // helps for a per-model rate limit; a fully exhausted account quota
+      // will fail the fallback call too, and that's handled below.
+      if (isQuotaError(primaryError) && FALLBACK_MODEL !== PRIMARY_MODEL) {
+        console.warn(`[ATSAIService] Primary model ${PRIMARY_MODEL} failed, falling back to ${FALLBACK_MODEL}`);
+        usedModel = FALLBACK_MODEL;
+        response = await openai.chat.completions.create({
+          model: FALLBACK_MODEL,
+          messages: [
+            { role: "system", content: buildSystemPrompt() },
+            { role: "user", content: userContent },
+          ],
+          temperature: 0.3,
+          max_tokens: 4096,
+          response_format: { type: "json_object" },
+        });
+      } else {
+        throw primaryError;
+      }
     }
+  } catch (err) {
+    if (isQuotaError(err)) {
+      console.error("[ATSAIService] OpenAI quota exhausted:", err.message);
+      throw new Error(
+        "Our AI resume analyzer has reached its usage limit for now. Please try again later."
+      );
+    }
+    throw err;
   }
 
   // Step 3: Parse and validate the JSON response
@@ -323,9 +431,16 @@ const analyzeResume = async (fileBuffer, mimeType, fileName, jobDescription = ""
 
   const processingTimeMs = Date.now() - startTime;
 
+  // When the resume was read via image (no text layer), fall back to the
+  // AI's own transcription so re-analysis/regeneration later still has real
+  // text to work from instead of an empty string.
+  const finalExtractedText = hasUsableText
+    ? extractedText
+    : (analysis.updatedResumeContent || extractedText || "");
+
   return {
     analysis,
-    extractedText,
+    extractedText: finalExtractedText,
     tokensUsed: response.usage?.total_tokens || 0,
     processingTimeMs,
     model: usedModel,

@@ -108,12 +108,14 @@ router.post('/updateCompany', mandatory, selectTenantDB, companySvc.updateCompan
 router.get('/getSkills', mandatory, companySvc.getAvailableSkills);
 router.get('/organizations/:orgId/jobs/paginated', companySvc.getJobsByOrgPaginated);
 router.get('/organizations/:orgId/users/paginated', companySvc.getUsersByOrgPaginated);
+router.delete('/deleteHr/:hrId', mandatory, selectTenantDB, companySvc.deleteHr);
 
 // ─── TPO Auth ─────────────────────────────────────────────────────────────────
 router.post('/createTpo', mandatory, selectTenantDB, tpoSvc.createTpo);
 router.post('/loginTpo', mandatory, selectTenantDB, tpoSvc.loginTpo);
 router.get('/getTpo', mandatory, selectTenantDB, tpoSvc.getTpo);
 router.post('/updateTpo', mandatory, selectTenantDB, tpoSvc.updateTpo);
+router.put('/toggleTpoStatus/:tpoId', mandatory, selectTenantDB, tpoSvc.toggleTpoStatus);
 router.delete('/deleteTpo/:tpoId', mandatory, selectTenantDB, tpoSvc.deleteTpo);
 
 // ─── Auth / Organisation (from original users.js) ────────────────────────────
@@ -124,7 +126,7 @@ router.get('/cms/health', (req, res) => res.status(200).json({ status: 'OK', tim
 
 // ─── Internships (Admin manages: create/update/delete, student-facing: view/apply)
 // Mount entire internships router (it handles auth internally per-route)
-router.use('/', internshipsSvc);
 router.use('/internships', internshipsSvc);
+router.use('/', internshipsSvc);
 
 module.exports = router;
