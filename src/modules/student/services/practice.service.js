@@ -775,20 +775,73 @@ module.exports.startPractice = async (req, res) => {
   try {
     const { userId, refId, type, limit = 20 } = req.body;
 
-    const covId = new ObjectId(refId);
+    const isObjId = ObjectId.isValid(refId);
+    const covId = isObjId ? new ObjectId(refId) : refId;
 
-    const query = {
-      [type]: covId,
+    const baseQuery = {
+      [type]: isObjId ? { $in: [covId, refId.toString()] } : refId,
     };
 
-    // Call findInAllTenants with optional limit
-    const data = await findInAllTenants("questions", query, "find", { limit });
+    // 1. Get total number of questions available for this subtopic / query
+    let totalQuestions = await findInAllTenants("questions", baseQuery, "countDocuments");
+
+    // Fallback: If type is subTopicId but yields 0 questions, try matching subjectId if provided or inferred
+    let activeQuery = baseQuery;
+    if (totalQuestions === 0 && type === "subTopicId" && req.body.subjectId) {
+      const subObjId = ObjectId.isValid(req.body.subjectId) ? new ObjectId(req.body.subjectId) : req.body.subjectId;
+      activeQuery = { subjectId: subObjId };
+      totalQuestions = await findInAllTenants("questions", activeQuery, "countDocuments");
+    }
+
+    // 2. Fetch past practice sessions to find seen questions
+    const pastSessions = await pracSessions.find({ userId, refId }).toArray();
+    
+    let seenQuestionIds = new Set();
+    pastSessions.forEach(session => {
+      if (session.questionsData && Array.isArray(session.questionsData)) {
+        session.questionsData.forEach(q => {
+          if (q && q._id) seenQuestionIds.add(q._id.toString());
+        });
+      }
+    });
+
+    // If student has seen all available questions (or more, e.g. due to db changes), reset tracking
+    if (seenQuestionIds.size >= totalQuestions && totalQuestions > 0) {
+      seenQuestionIds.clear();
+    }
+
+    const seenIdsArray = Array.from(seenQuestionIds).map(id => ObjectId.isValid(id) ? new ObjectId(id) : id);
+
+    // 3. Query unseen questions
+    const unseenQuery = {
+      ...activeQuery,
+      _id: { $nin: seenIdsArray }
+    };
+    
+    let finalQuestions = await findInAllTenants("questions", unseenQuery, "find", { limit });
+
+    // 4. Pad with seen questions if unseen < limit
+    if (finalQuestions.length < limit && seenIdsArray.length > 0) {
+      const padCount = limit - finalQuestions.length;
+      const seenQuery = {
+        ...activeQuery,
+        _id: { $in: seenIdsArray }
+      };
+      const seenQuestionsToPad = await findInAllTenants("questions", seenQuery, "find", { limit: padCount });
+      finalQuestions = [...finalQuestions, ...seenQuestionsToPad];
+    }
+
+    // 5. Shuffle final questions array
+    for (let i = finalQuestions.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [finalQuestions[i], finalQuestions[j]] = [finalQuestions[j], finalQuestions[i]];
+    }
 
     const pracData = await pracSessions.insertOne({
       userId: userId,
       refId: refId,
       type: type,
-      questionsData: data,
+      questionsData: finalQuestions,
       createdAt: new Date().getTime(),
     });
 
@@ -804,8 +857,8 @@ module.exports.startPractice = async (req, res) => {
     res.status(200).json({
       msg: "Practice started successfully",
       data: pracData,
-      questionsData: data,
-      count: data.length,
+      questionsData: finalQuestions,
+      count: finalQuestions.length,
     });
   } catch (error) {
     res.status(500).json({ err: error.message });
