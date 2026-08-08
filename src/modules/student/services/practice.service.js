@@ -776,14 +776,23 @@ module.exports.startPractice = async (req, res) => {
   try {
     const { userId, refId, type, limit = 20 } = req.body;
 
-    const covId = new ObjectId(refId);
+    const isObjId = ObjectId.isValid(refId);
+    const covId = isObjId ? new ObjectId(refId) : refId;
 
     const baseQuery = {
-      [type]: covId,
+      [type]: isObjId ? { $in: [covId, refId.toString()] } : refId,
     };
 
-    // 1. Get total number of questions available for this subtopic
-    const totalQuestions = await findInAllTenants("questions", baseQuery, "countDocuments");
+    // 1. Get total number of questions available for this subtopic / query
+    let totalQuestions = await findInAllTenants("questions", baseQuery, "countDocuments");
+
+    // Fallback: If type is subTopicId but yields 0 questions, try matching subjectId if provided or inferred
+    let activeQuery = baseQuery;
+    if (totalQuestions === 0 && type === "subTopicId" && req.body.subjectId) {
+      const subObjId = ObjectId.isValid(req.body.subjectId) ? new ObjectId(req.body.subjectId) : req.body.subjectId;
+      activeQuery = { subjectId: subObjId };
+      totalQuestions = await findInAllTenants("questions", activeQuery, "countDocuments");
+    }
 
     // 2. Fetch past practice sessions to find seen questions
     const pastSessions = await pracSessions.find({ userId, refId }).toArray();
@@ -802,11 +811,11 @@ module.exports.startPractice = async (req, res) => {
       seenQuestionIds.clear();
     }
 
-    const seenIdsArray = Array.from(seenQuestionIds).map(id => new ObjectId(id));
+    const seenIdsArray = Array.from(seenQuestionIds).map(id => ObjectId.isValid(id) ? new ObjectId(id) : id);
 
     // 3. Query unseen questions
     const unseenQuery = {
-      ...baseQuery,
+      ...activeQuery,
       _id: { $nin: seenIdsArray }
     };
     
@@ -816,7 +825,7 @@ module.exports.startPractice = async (req, res) => {
     if (finalQuestions.length < limit && seenIdsArray.length > 0) {
       const padCount = limit - finalQuestions.length;
       const seenQuery = {
-        ...baseQuery,
+        ...activeQuery,
         _id: { $in: seenIdsArray }
       };
       const seenQuestionsToPad = await findInAllTenants("questions", seenQuery, "find", { limit: padCount });
