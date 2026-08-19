@@ -169,6 +169,8 @@ async function getStudentCreds(req, res) {
     res.status(200).json({
       data: {
         ...responseData,
+        createdAt: globalUser ? globalUser.createdAt : responseData.createdAt,
+        loginCount: globalUser ? globalUser.loginCount : undefined,
         verified: globalUser ? globalUser.active : false,
         active: globalUser ? globalUser.active : false,
         orgDetails: { orgId: req.orgId }

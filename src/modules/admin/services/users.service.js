@@ -189,6 +189,9 @@ console.log(loginData)
           loginStreak,
           longestStreak,
         },
+        $inc: {
+          loginCount: 1,
+        },
       }
     );
 
