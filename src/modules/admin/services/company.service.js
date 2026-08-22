@@ -76,7 +76,6 @@ module.exports.createCompany = async (req, res) => {
       token,
     });
   } catch (error) {
-    console.log(`error while creating Company : ${error.message}`);
     res
       .status(500)
       .json({ err: `error while creating Company : ${error.message}` });
@@ -118,7 +117,6 @@ module.exports.loginCompany = async (req, res) => {
       .status(200)
       .send({ msg: "loggedin successfully", ...loginData, token: token });
   } catch (error) {
-    console.log(`error while login user : ${error.message}`);
     res.status(500).json({ err: `error while login user : ${error.message}` });
   }
 };
@@ -149,7 +147,6 @@ module.exports.getCompany = async (req, res) => {
     if (!findUser) throw new Error("Company not registered");
     res.status(200).json({ data: findUser });
   } catch (error) {
-    console.error('getCompany error:', error);
     res.status(500).json({ err: error.message });
   }
 };
@@ -271,7 +268,6 @@ module.exports.getJobsByOrgPaginated = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Error fetching jobs:", error);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -353,7 +349,6 @@ module.exports.getUsersByOrgPaginated = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Error fetching users:", error);
     res.status(500).json({
       success: false,
       error: error.message,

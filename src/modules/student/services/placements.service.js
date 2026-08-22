@@ -2579,10 +2579,20 @@ module.exports.getAllAppliedStudents = async (req, res) => {
         if (!student.appliedJobs || !Array.isArray(student.appliedJobs))
           return false;
 
-        return student.appliedJobs.some(
-          (job) =>
-            job.createdAt >= startTimestamp && job.createdAt <= endTimestamp
-        );
+        return student.appliedJobs.some((job) => {
+          if (jobId && job.id && job.id.toString() !== jobId.toString()) {
+            return false;
+          }
+          const jobDate = job.createdAt || job.appliedDate || job.date;
+          if (!jobDate) return false;
+          const jobTimestamp =
+            typeof jobDate === "number" ? jobDate : new Date(jobDate).getTime();
+          return (
+            !isNaN(jobTimestamp) &&
+            jobTimestamp >= startTimestamp &&
+            jobTimestamp <= endTimestamp
+          );
+        });
       });
     }
 
@@ -2591,6 +2601,9 @@ module.exports.getAllAppliedStudents = async (req, res) => {
       const yearValue = parseInt(filter.yearOfPass);
 
       filteredStudents = filteredStudents.filter((student) => {
+        if (student.yearOfPassing && parseInt(student.yearOfPassing) === yearValue) return true;
+        if (student.batch && parseInt(student.batch) === yearValue) return true;
+
         if (
           !student.educationDetails ||
           !Array.isArray(student.educationDetails)
@@ -2598,7 +2611,7 @@ module.exports.getAllAppliedStudents = async (req, res) => {
           return false;
 
         return student.educationDetails.some(
-          (edu) => edu.yearofPass === yearValue
+          (edu) => parseInt(edu.yearofPass || edu.yearOfPassing || edu.passYear || edu.year) === yearValue
         );
       });
     }
@@ -2608,6 +2621,8 @@ module.exports.getAllAppliedStudents = async (req, res) => {
       const gradeValue = parseFloat(filter.CGPA);
 
       filteredStudents = filteredStudents.filter((student) => {
+        if (student.cgpa && parseFloat(student.cgpa) >= gradeValue) return true;
+
         if (
           !student.educationDetails ||
           !Array.isArray(student.educationDetails)
@@ -2617,11 +2632,12 @@ module.exports.getAllAppliedStudents = async (req, res) => {
         return student.educationDetails.some((degree) => {
           if (!degree.grade) return false;
 
-          let normalizedGrade;
-          if (degree.gradingSystem === "cgpa") {
-            normalizedGrade = parseFloat(degree.grade);
-          } else {
-            normalizedGrade = parseFloat(degree.grade) / 10;
+          const rawGrade = parseFloat(degree.grade);
+          if (isNaN(rawGrade)) return false;
+
+          let normalizedGrade = rawGrade;
+          if (degree.gradingSystem === "percentage" || rawGrade > 10) {
+            normalizedGrade = rawGrade / 10;
           }
 
           return normalizedGrade >= gradeValue;
