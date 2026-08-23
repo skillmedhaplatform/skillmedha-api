@@ -50,7 +50,7 @@ router.post('/assessments/deleteCompQuestion/:id',              mandatory, selec
 router.post('/assessments/deleteQuestionFromComp/:id',          mandatory, selectTenantDB, testsSvc.deleteQuestionFromComp);
 router.post('/assessments/getResultsData/:id',                  mandatory, selectTenantDB, testsSvc.getResultsData);
 router.post('/assessments/bulkUploadQuestions/:testId',         mandatory, selectTenantDB, upload.single('file'), testsSvc.bulkUploadQuestions);
-router.post('/assessments/bulkUploadQuestionstobank',           mandatory, selectTenantDB, testsSvc.bulkUploadQuestionsToBank);
+router.post('/assessments/bulkUploadQuestionstobank',           mandatory, selectTenantDB, upload.single('file'), testsSvc.bulkUploadQuestionsToBank);
 router.post('/assessments/addBankQuestion',                     mandatory, selectTenantDB, testsSvc.addQuestionToBank);
 router.post('/assessments/sendBulkTestAccessMail',              mandatory, selectTenantDB, testsSvc.sendBulkTestAccessMailBatched);
 router.get('/assessments/getRecentTestResults/:studentId',      mandatory, selectTenantDB, testsSvc.getRecentTestResults);
