@@ -9,17 +9,17 @@ const { optional, mandatory } = require('../../shared/middleware/auth.middleware
 const { selectTenantDB } = require('../../shared/middleware/selectTenantDB.middleware');
 
 // ─── Services (original business logic, re-imported with fixed paths) ─────────
-const studentRouter     = require('./services/studentRouter.service');
-const atsChecker     = require('./atsChecker/server');
+const studentRouter = require('./services/studentRouter.service');
+const atsChecker = require('./atsChecker/server');
 
-const resumeSvc         = require('./services/resume.service');
-const placementsSvc     = require('./services/placements.service');
-const practiceSvc       = require('./services/practice.service');
+const resumeSvc = require('./services/resume.service');
+const placementsSvc = require('./services/placements.service');
+const practiceSvc = require('./services/practice.service');
 
 
 // ─── testPortal router (student-facing: progress, assigned tests) ─────────────
-const testPortalRouter  = require('./services/testPortalRouter.service');
-const studentCtrl       = require('./controllers/student.controller');
+const testPortalRouter = require('./services/testPortalRouter.service');
+const studentCtrl = require('./controllers/student.controller');
 
 // ─── Multer config ────────────────────────────────────────────────────────────
 const storage = multer.diskStorage({
@@ -44,24 +44,25 @@ router.post('/updateResume', mandatory, selectTenantDB, resumeSvc.updateResume |
 router.post('/deleteResume', mandatory, selectTenantDB, resumeSvc.deleteResume || ((req, res) => res.status(501).json({ error: 'Not implemented' })));
 
 // ─── Placements / Jobs (student-facing) ──────────────────────────────────────
-router.get('/getAllJobs',                      mandatory, selectTenantDB, placementsSvc.getAllJobs);
-router.get('/applyJob',                        mandatory, selectTenantDB, placementsSvc.applyJob);
-router.get('/setJobStatus',                    mandatory, selectTenantDB, placementsSvc.setJobStatus);
-router.post('/getOneJob/:jobId',              mandatory, selectTenantDB, placementsSvc.getOneJob);
-router.get('/getAllJobsBasedOnplacements',     mandatory, selectTenantDB, placementsSvc.getAllJobsBasedOnplacements);
-router.get('/getAssignedAssessments',         mandatory, selectTenantDB, placementsSvc.getAssignedAssessments);
+router.get('/getAllJobs', mandatory, selectTenantDB, placementsSvc.getAllJobs);
+router.get('/applyJob', mandatory, selectTenantDB, placementsSvc.applyJob);
+router.get('/setJobStatus', mandatory, selectTenantDB, placementsSvc.setJobStatus);
+router.post('/getOneJob/:jobId', mandatory, selectTenantDB, placementsSvc.getOneJob);
+router.get('/getAllJobsBasedOnplacements', mandatory, selectTenantDB, placementsSvc.getAllJobsBasedOnplacements);
+router.get('/getAssignedAssessments', mandatory, selectTenantDB, placementsSvc.getAssignedAssessments);
 router.get('/getOneAssessmentFromStudent/:assessmentId', mandatory, selectTenantDB, placementsSvc.getOneAssessmentFromStudent);
-router.get('/getJobAssessmentResultsForStudent/:assessmentId/:studentId',         mandatory, selectTenantDB, placementsSvc.getJobAssessmentResultsForStudent);
+router.get('/getJobAssessmentResultsForStudent/:assessmentId/:studentId', mandatory, selectTenantDB, placementsSvc.getJobAssessmentResultsForStudent);
 
 // ─── Practice (student-facing) ────────────────────────────────────────────────
-router.get('/subjects',                        mandatory, selectTenantDB, practiceSvc.getAllSubjects);
-router.get('/subjects/type/:type',             mandatory, selectTenantDB, practiceSvc.getSubjectsByType);
-router.get('/topics/subject/:subjectId',       mandatory, selectTenantDB, practiceSvc.getTopicsBySubject);
-router.get('/subtopics/topic/:topicId',        mandatory, selectTenantDB, practiceSvc.getSubtopicsByTopic);
-router.get('/getpracquestions',               mandatory, selectTenantDB, practiceSvc.getQuestionsByTopicAndSubject);
-router.post('/startPractice',                  mandatory, selectTenantDB, practiceSvc.startPractice);
-router.post('/savePracResults/:pracId',        mandatory, selectTenantDB, practiceSvc.savePracResults);
-router.get('/getStudentPracResults/:userId',   mandatory, selectTenantDB, practiceSvc.getStudentPracResults);
+router.get('/subjects', mandatory, selectTenantDB, practiceSvc.getAllSubjects);
+router.get('/subjects/type/:type', mandatory, selectTenantDB, practiceSvc.getSubjectsByType);
+router.get('/topics/subject/:subjectId', mandatory, selectTenantDB, practiceSvc.getTopicsBySubject);
+router.get('/subtopics/topic/:topicId', mandatory, selectTenantDB, practiceSvc.getSubtopicsByTopic);
+router.get('/getpracquestions', mandatory, selectTenantDB, practiceSvc.getQuestionsByTopicAndSubject);
+router.get('/difficultyStats', mandatory, selectTenantDB, practiceSvc.getDifficultyStats);
+router.post('/startPractice', mandatory, selectTenantDB, practiceSvc.startPractice);
+router.post('/savePracResults/:pracId', mandatory, selectTenantDB, practiceSvc.savePracResults);
+router.get('/getStudentPracResults/:userId', mandatory, selectTenantDB, practiceSvc.getStudentPracResults);
 
 
 router.get('/dashboard/stats', mandatory, selectTenantDB, studentCtrl.getDashboardStats);

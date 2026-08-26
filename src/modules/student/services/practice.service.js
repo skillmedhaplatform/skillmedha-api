@@ -460,6 +460,11 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
       solution: "explanation",
       difficulty: "difficulty",
       level: "difficulty",
+      concept: "concept",
+      companyname: "companyName",
+      examname: "examName",
+      examyear: "examYear",
+      sectionname: "sectionName",
       scorepoints: "scorePoints",
       score_points: "scorePoints",
       score: "scorePoints",
@@ -481,6 +486,7 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
       correct_answer: "correctAnswer",
       answer: "correctAnswer",
       answers: "correctAnswer",
+      correctanswers: "correctAnswer",
       testcasesjson: "testCasesJSON",
       test_cases_json: "testCasesJSON",
       testcases: "testCasesJSON",
@@ -527,7 +533,6 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
       const correctAnsRaw = String(questionData.correctAnswer || "").trim();
 
       if (questionType === "Single Choice" || questionType === "Multiple Choice") {
-        // Try to map "Option 1", "1", "A", or exact text to "option N"
         const optionsMap = [
           { key: "option 1", val: questionContent["option 1"] },
           { key: "option 2", val: questionContent["option 2"] },
@@ -535,24 +540,42 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
           { key: "option 4", val: questionContent["option 4"] },
         ];
 
-        const foundOption = optionsMap.find(opt => {
-          return (
-            opt.val === correctAnsRaw || // Exact text match
-            correctAnsRaw.toLowerCase() === opt.key || // "option 1" match
-            correctAnsRaw === opt.key.replace("option ", "") || // "1" match
-            (correctAnsRaw.toLowerCase() === "a" && opt.key === "option 1") ||
-            (correctAnsRaw.toLowerCase() === "b" && opt.key === "option 2") ||
-            (correctAnsRaw.toLowerCase() === "c" && opt.key === "option 3") ||
-            (correctAnsRaw.toLowerCase() === "d" && opt.key === "option 4")
-          );
-        });
+        const matchOption = (ansText) => {
+          const raw = String(ansText || "").trim();
+          return optionsMap.find(opt => {
+            return (
+              opt.val === raw ||
+              raw.toLowerCase() === opt.key ||
+              raw === opt.key.replace("option ", "") ||
+              (raw.toLowerCase() === "a" && opt.key === "option 1") ||
+              (raw.toLowerCase() === "b" && opt.key === "option 2") ||
+              (raw.toLowerCase() === "c" && opt.key === "option 3") ||
+              (raw.toLowerCase() === "d" && opt.key === "option 4")
+            );
+          });
+        };
 
-        if (foundOption) {
-          answer.singleChoice = {
-            [foundOption.key]: true
-          };
-        } else {
-          answer.singleChoice = { "option 1": true };
+        if (questionType === "Single Choice") {
+          const foundOption = matchOption(correctAnsRaw);
+          if (foundOption) {
+            answer.singleChoice = { [foundOption.key]: true };
+          } else {
+            answer.singleChoice = { "option 1": true };
+          }
+        } else if (questionType === "Multiple Choice") {
+          answer.multipleChoice = {};
+          const answers = correctAnsRaw.split(',').map(a => a.trim());
+          let foundAny = false;
+          answers.forEach(ans => {
+            const foundOption = matchOption(ans);
+            if (foundOption) {
+              answer.multipleChoice[foundOption.key] = true;
+              foundAny = true;
+            }
+          });
+          if (!foundAny) {
+            answer.multipleChoice = { "option 1": true };
+          }
         }
       } else if (questionType === "True/False") {
         // Existing schema likely uses same structure or just "answer": true/false?
@@ -591,6 +614,24 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
         createdBy: req.userID,
         isTest: isTest === "true" || isTest === true,
       };
+
+      if (questionData.concept) {
+        questionObj.concept = String(questionData.concept).trim();
+      }
+
+      if (questionData.companyName) {
+        const companyNames = String(questionData.companyName).split(',').map(s => s.trim());
+        const examNames = questionData.examName ? String(questionData.examName).split(',').map(s => s.trim()) : [];
+        const examYears = questionData.examYear ? String(questionData.examYear).split(',').map(s => s.trim()) : [];
+        const sectionNames = questionData.sectionName ? String(questionData.sectionName).split(',').map(s => s.trim()) : [];
+
+        questionObj.companyTags = companyNames.map((cName, i) => ({
+          companyName: cName,
+          examName: examNames[i] || undefined,
+          year: examYears[i] ? Number(examYears[i]) : undefined,
+          sectionName: sectionNames[i] || undefined
+        }));
+      }
 
       // Add optional topicId and subTopicId if provided
       if (topicId) {
@@ -771,10 +812,12 @@ module.exports.getQuestionsByTopicAndSubject = async (req, res) => {
   }
 };
 
-module.exports.startPractice = async (req, res) => {
-  const { pracSessions, student } = connectTodb(req.tenantDB);
+module.exports.getDifficultyStats = async (req, res) => {
   try {
-    const { userId, refId, type, limit = 20 } = req.body;
+    const { refId, type, subjectId } = req.query;
+    if (!refId || !type) {
+      return res.status(400).json({ err: "refId and type are required" });
+    }
 
     const isObjId = ObjectId.isValid(refId);
     const covId = isObjId ? new ObjectId(refId) : refId;
@@ -782,6 +825,60 @@ module.exports.startPractice = async (req, res) => {
     const baseQuery = {
       [type]: isObjId ? { $in: [covId, refId.toString()] } : refId,
     };
+
+    let activeQuery = baseQuery;
+    let totalQuestions = await findInAllTenants("questions", baseQuery, "countDocuments");
+
+    if (totalQuestions === 0 && type === "subTopicId" && subjectId) {
+      const subObjId = ObjectId.isValid(subjectId) ? new ObjectId(subjectId) : subjectId;
+      activeQuery = { subjectId: subObjId };
+    }
+
+    // Since findInAllTenants doesn't support complex aggregations across multiple tenants easily in this wrapper,
+    // we'll run 3 separate countDocuments queries.
+    const easyQuery = { ...activeQuery, difficulty: { $regex: new RegExp("^easy$", "i") } };
+    const mediumQuery = { ...activeQuery, difficulty: { $regex: new RegExp("^medium$", "i") } };
+    const hardQuery = { ...activeQuery, difficulty: { $regex: new RegExp("^hard$", "i") } };
+
+    const [easyCount, mediumCount, hardCount] = await Promise.all([
+      findInAllTenants("questions", easyQuery, "countDocuments"),
+      findInAllTenants("questions", mediumQuery, "countDocuments"),
+      findInAllTenants("questions", hardQuery, "countDocuments"),
+    ]);
+
+    res.status(200).json({
+      easy: easyCount,
+      medium: mediumCount,
+      hard: hardCount
+    });
+  } catch (error) {
+    res.status(500).json({ err: error.message });
+  }
+};
+
+module.exports.startPractice = async (req, res) => {
+  const { pracSessions, student } = connectTodb(req.tenantDB);
+  try {
+    let { userId, refId, type, limit = 20, difficulty } = req.body;
+
+    // Apply difficulty limits if difficulty is provided and limit is default
+    if (difficulty && req.body.limit === undefined) {
+      const diffLower = difficulty.toLowerCase();
+      if (diffLower === 'easy') limit = 25;
+      else if (diffLower === 'medium') limit = 20;
+      else if (diffLower === 'hard') limit = 15;
+    }
+
+    const isObjId = ObjectId.isValid(refId);
+    const covId = isObjId ? new ObjectId(refId) : refId;
+
+    const baseQuery = {
+      [type]: isObjId ? { $in: [covId, refId.toString()] } : refId,
+    };
+
+    if (difficulty) {
+      baseQuery.difficulty = { $regex: new RegExp(`^${difficulty}$`, "i") };
+    }
 
     // 1. Get total number of questions available for this subtopic / query
     let totalQuestions = await findInAllTenants("questions", baseQuery, "countDocuments");
@@ -842,6 +939,7 @@ module.exports.startPractice = async (req, res) => {
       userId: userId,
       refId: refId,
       type: type,
+      difficulty: difficulty,
       questionsData: finalQuestions,
       createdAt: new Date().getTime(),
     });
