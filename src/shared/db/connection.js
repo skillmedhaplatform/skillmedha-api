@@ -108,6 +108,17 @@ function _initGlobalCollections() {
     { background: true }
   ).catch(err => console.warn('[DB] internships type index:', err));
 
+  db_resources.collection('chatWidgetUsage').createIndex(
+    { visitorId: 1, day: 1 },
+    { unique: true, background: true }
+  ).catch(err => console.warn('[DB] chatWidgetUsage index:', err));
+
+  // Auto-expire usage docs 3 days after creation — we only ever need "today"'s count.
+  db_resources.collection('chatWidgetUsage').createIndex(
+    { createdAt: 1 },
+    { expireAfterSeconds: 60 * 60 * 24 * 3, background: true }
+  ).catch(err => console.warn('[DB] chatWidgetUsage TTL index:', err));
+
   _globalCollections = {
     mainDBusers:            db.collection('users'),
     organisation:           db.collection('organizations'),
@@ -127,6 +138,7 @@ function _initGlobalCollections() {
     payment:                db.collection('payment'),
     aiUsageCollection:      db_resources.collection('ai_usage'),
     marqueeNotices:         db.collection('marqueeNotices'),
+    chatWidgetUsage:        db_resources.collection('chatWidgetUsage'),
   };
 
   return _globalCollections;

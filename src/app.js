@@ -113,6 +113,60 @@ app.get('/api/public/stats', async (req, res) => {
   }
 });
 
+// ─── Chat widget rate limit (public, unauthenticated) ────────────────────────
+// Must be registered here, before the module routers below (studentRouter,
+// adminRouter, etc). Some of those routers apply auth via an unscoped
+// router.use(authenticate) deep inside a sub-router that's also mounted at
+// '/' (see modules/admin/services/internships.service.js), which ends up
+// requiring a token for literally every unmatched request that reaches it —
+// including ones meant for aiRouter. Registering here, before any of that,
+// sidesteps the issue entirely.
+app.post('/ai/chatWidget/consume', async (req, res) => {
+  const CHAT_WIDGET_DAILY_LIMIT = parseInt(process.env.CHAT_WIDGET_DAILY_LIMIT || '20', 10);
+  try {
+    const { visitorId } = req.body;
+    if (!visitorId || typeof visitorId !== 'string') {
+      return res.status(400).json({ error: 'Missing visitorId' });
+    }
+
+    const { chatWidgetUsage } = getGlobalCollections();
+    const day = new Date().toISOString().slice(0, 10); // UTC calendar day
+
+    const doc = await chatWidgetUsage.findOneAndUpdate(
+      { visitorId, day },
+      { $inc: { count: 1 }, $setOnInsert: { createdAt: new Date() } },
+      { upsert: true, returnDocument: 'after' }
+    );
+
+    const used = doc.count;
+
+    if (used > CHAT_WIDGET_DAILY_LIMIT) {
+      return res.status(429).json({
+        allowed: false,
+        limit: CHAT_WIDGET_DAILY_LIMIT,
+        used,
+        error: `Daily limit of ${CHAT_WIDGET_DAILY_LIMIT} messages reached. Please try again tomorrow.`,
+      });
+    }
+
+    return res.json({
+      allowed: true,
+      limit: CHAT_WIDGET_DAILY_LIMIT,
+      used,
+      remaining: CHAT_WIDGET_DAILY_LIMIT - used,
+    });
+  } catch (err) {
+    console.error('chatWidget/consume error:', err);
+    // Fail open — a DB hiccup shouldn't block chat entirely.
+    return res.json({
+      allowed: true,
+      limit: CHAT_WIDGET_DAILY_LIMIT,
+      used: 0,
+      remaining: CHAT_WIDGET_DAILY_LIMIT,
+    });
+  }
+});
+
 // ─── Azure Blob upload endpoints ─────────────────────────────────────────────
 function getAudioDurationInSeconds(filePath) {
   try {

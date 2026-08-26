@@ -5,7 +5,6 @@
 
 const express = require("express");
 const router = express.Router();
-const OpenAI = require("openai");
 const mongoDB = require("mongodb");
 
 const { mandatory: authenticate } = require("../middleware/auth.middleware");
@@ -16,10 +15,58 @@ const {
   organisation,
 } = require("../db/connection").getGlobalCollections();
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  // project: process.env.OPENAI_PROJID,
-});
+/*****************************************
+ *  CLOUDFLARE WORKERS AI CLIENT
+ *****************************************/
+
+const CF_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
+const CF_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
+const CF_MODEL_DEFAULT =
+  process.env.CLOUDFLARE_AI_MODEL || "@cf/meta/llama-3.1-8b-instruct";
+const CF_MODEL_LARGE =
+  process.env.CLOUDFLARE_AI_MODEL_LARGE ||
+  "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+
+// Mirrors the OpenAI chat-completion response shape (choices[0].message.content,
+// usage.{prompt,completion,total}_tokens) so the route handlers below don't change.
+const runWorkersAI = async ({
+  model = CF_MODEL_DEFAULT,
+  messages,
+  temperature,
+}) => {
+  const url = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai/run/${model}`;
+
+  const body = { messages };
+  if (temperature !== undefined) body.temperature = temperature;
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${CF_API_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  const json = await resp.json();
+
+  if (!resp.ok || json.success === false) {
+    const msg =
+      json?.errors?.[0]?.message || `Workers AI request failed (${resp.status})`;
+    throw new Error(msg);
+  }
+
+  const usage = json.result?.usage || {};
+
+  return {
+    choices: [{ message: { content: json.result?.response ?? "" } }],
+    usage: {
+      prompt_tokens: usage.prompt_tokens || 0,
+      completion_tokens: usage.completion_tokens || 0,
+      total_tokens: usage.total_tokens || 0,
+    },
+  };
+};
 
 /*****************************************
  *  HELPERS
@@ -182,7 +229,11 @@ async function quotaLimiter(req, res, next) {
   }
 }
 
-// Apply quota limiter to all AI routes
+// NOTE: the public, unauthenticated /chatWidget/consume rate-limit route lives
+// in app.js (registered directly on `app`, before the module routers) — see
+// the comment there for why it can't safely live inside this router.
+
+// Apply quota limiter to all AI routes registered below this point
 router.use(quotaLimiter);
 
 /*****************************************
@@ -209,8 +260,8 @@ router.post("/checkCode", authenticate, async (req, res) => {
     Code: ${code}
     `;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    const completion = await runWorkersAI({
+      model: CF_MODEL_DEFAULT,
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -260,10 +311,9 @@ router.post("/checkEnglishText", authenticate, async (req, res) => {
       Ensure all HTML strings are safe and formatted for direct rendering.
     `;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    const completion = await runWorkersAI({
+      model: CF_MODEL_DEFAULT,
       messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
     });
 
     const { prompt_tokens, completion_tokens, total_tokens } = completion.usage;
@@ -302,8 +352,8 @@ router.post("/getExplanationFOrQuestion", authenticate, async (req, res) => {
     Answer: ${answer}
     `;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    const completion = await runWorkersAI({
+      model: CF_MODEL_DEFAULT,
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -334,8 +384,8 @@ router.post("/repharseSummary", authenticate, async (req, res) => {
 
     const prompt = `Rephrase this: ${summary}`;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    const completion = await runWorkersAI({
+      model: CF_MODEL_DEFAULT,
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -371,8 +421,8 @@ router.post("/generateTestDescription", authenticate, async (req, res) => {
 
     const prompt = `Generate a neutral 3–5 sentence test description for: "${title}"`;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    const completion = await runWorkersAI({
+      model: CF_MODEL_DEFAULT,
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -430,8 +480,8 @@ Test Cases:
 ${JSON.stringify(question, null, 2)}
 `;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    const completion = await runWorkersAI({
+      model: CF_MODEL_DEFAULT,
       messages: [{ role: "user", content: prompt }],
       temperature: 0,
     });
@@ -481,8 +531,8 @@ router.post("/generateExp", authenticate, async (req, res) => {
       Respond with raw HTML only. Do NOT include markdown code blocks (e.g., \`\`\`html).
     `;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    const completion = await runWorkersAI({
+      model: CF_MODEL_DEFAULT,
       messages: [
         {
           role: "system",
@@ -533,8 +583,8 @@ ${textPara}
 Strict JSON output.
 `;
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+      const completion = await runWorkersAI({
+        model: CF_MODEL_DEFAULT,
         messages: [{ role: "user", content: prompt }],
       });
 
@@ -576,8 +626,8 @@ ${code}
 Return JSON with fields.
 `;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
+    const completion = await runWorkersAI({
+      model: CF_MODEL_LARGE,
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -628,8 +678,8 @@ ${JSON.stringify(attemptedData, null, 2)}
 Return JSON { summary: "" }
 `;
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+      const completion = await runWorkersAI({
+        model: CF_MODEL_DEFAULT,
         messages: [{ role: "user", content: prompt }],
       });
 
@@ -673,8 +723,8 @@ Explanation: ${explanation}
 Return JSON only.
     `;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    const completion = await runWorkersAI({
+      model: CF_MODEL_DEFAULT,
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -717,8 +767,8 @@ Generate resume summary for:
 ${JSON.stringify(resumeData)}
 `;
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+      const completion = await runWorkersAI({
+        model: CF_MODEL_DEFAULT,
         messages: [{ role: "user", content: prompt }],
       });
 
@@ -763,8 +813,8 @@ Improve resume bullet:
 ${text}
       `;
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+      const completion = await runWorkersAI({
+        model: CF_MODEL_DEFAULT,
         messages: [{ role: "user", content: prompt }],
       });
 
@@ -876,8 +926,8 @@ ${JSON.stringify(findStudent, null, 2)}
 JSON response strict format.
     `;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    const completion = await runWorkersAI({
+      model: CF_MODEL_DEFAULT,
       messages: [{ role: "user", content: prompt }],
     });
 
