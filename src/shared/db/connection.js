@@ -127,6 +127,7 @@ function _initGlobalCollections() {
     payment:                db.collection('payment'),
     aiUsageCollection:      db_resources.collection('ai_usage'),
     marqueeNotices:         db.collection('marqueeNotices'),
+    companyTests:           db_resources.collection('companyTests'),
   };
 
   return _globalCollections;

@@ -430,7 +430,7 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
       return res.status(400).json({ err: "Please upload a file" });
     }
 
-    const { subjectId, skillId, topicId, subTopicId, isTest } = req.query;
+    const { subjectId, skillId, topicId, subTopicId, isTest, uploadType } = req.query;
 
     if (!subjectId && !skillId) {
       return res.status(400).json({ err: "subjectId or skillId is required as query parameter" });
@@ -500,6 +500,22 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
         const schemaField = fieldMapping[normalizedKey];
         if (schemaField) {
           mappedQuestion[schemaField] = rawQuestion[key];
+        } else if (
+          normalizedKey.startsWith("sample") || 
+          normalizedKey.startsWith("hidden") || 
+          normalizedKey === "constraints" || 
+          normalizedKey === "problemstatement" || 
+          normalizedKey === "timelimit"
+        ) {
+          // Auto map without explicitly adding them to fieldMapping
+          const camelKey = normalizedKey
+            .replace('sampleinput', 'sampleInput')
+            .replace('sampleoutput', 'sampleOutput')
+            .replace('hiddeninput', 'hiddenInput')
+            .replace('hiddenoutput', 'hiddenOutput')
+            .replace('problemstatement', 'problemStatement')
+            .replace('timelimit', 'timeLimit');
+          mappedQuestion[camelKey] = rawQuestion[key];
         }
       });
       return mappedQuestion;
@@ -512,11 +528,28 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
     for (let i = 0; i < questionsData.length; i++) {
       const questionData = questionsData[i];
 
-      const questionType = questionData.questionType || "Single Choice"; // Defaulting to Single Choice if missing? Or Text?
+      let questionType = questionData.questionType;
+      
+      // Auto-detect Coding Question from Problem Statement column
+      if (!questionType && questionData.problemStatement) {
+        questionType = "Coding Question";
+      } else if (!questionType) {
+        questionType = "Single Choice"; // default fallback
+      }
+
+      if (uploadType === "coding") {
+        questionType = "Coding Question";
+      } else {
+        const t = String(questionType).toLowerCase();
+        if (t.includes("single")) questionType = "Single Choice";
+        else if (t.includes("multiple")) questionType = "Multiple Choice";
+        else if (t.includes("true") || t.includes("false")) questionType = "True/False";
+        else if (t.includes("coding")) questionType = "Coding Question";
+      }
 
       // 1. Build questionContent
       const questionContent = {
-        question: questionData.questionText || "",
+        question: questionData.questionText || questionData.problemStatement || "",
       };
 
       if (questionData.option1) questionContent["option 1"] = String(questionData.option1).trim();
@@ -619,6 +652,10 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
         questionObj.concept = String(questionData.concept).trim();
       }
 
+      if (questionData.sectionName) {
+        questionObj.sectionName = String(questionData.sectionName).trim();
+      }
+
       if (questionData.companyName) {
         const companyNames = String(questionData.companyName).split(',').map(s => s.trim());
         const examNames = questionData.examName ? String(questionData.examName).split(',').map(s => s.trim()) : [];
@@ -641,22 +678,42 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
         questionObj.subTopicId = new ObjectId(subTopicId);
       }
 
-      // Handle Coding Question specific fields if they differ from standard schema
-      // The provided "existing schema" was for Single Choice. Coding might be different.
-      // But user wants "bulk upload" so assuming uniformity or specific handling.
       // Handle Coding Question specific fields
       if (questionType === "Coding Question") {
-        if (questionData.testCasesJSON) {
+        const testCases = [];
+        
+        // Extract visible Sample Test Cases (1 to 5)
+        for (let j = 1; j <= 5; j++) {
+          if (questionData[`sampleInput${j}`] || questionData[`sampleOutput${j}`]) {
+            testCases.push({
+              input: questionData[`sampleInput${j}`] || "",
+              output: questionData[`sampleOutput${j}`] || "",
+              isHidden: false
+            });
+          }
+        }
+
+        // Extract Hidden Test Cases (1 to 10)
+        for (let j = 1; j <= 10; j++) {
+          if (questionData[`hiddenInput${j}`] || questionData[`hiddenOutput${j}`]) {
+            testCases.push({
+              input: questionData[`hiddenInput${j}`] || "",
+              output: questionData[`hiddenOutput${j}`] || "",
+              isHidden: true
+            });
+          }
+        }
+        
+        questionContent.testCases = testCases;
+        questionContent.constraints = questionData.constraints || "";
+        questionContent.timeLimit = questionData.timeLimit || "2.0";
+
+        // Fallback for old JSON string format if passed directly
+        if (questionData.testCasesJSON && testCases.length === 0) {
           try {
             const parsedCases = JSON.parse(questionData.testCasesJSON);
-            // Ensure specific structure for each test case if needed, or take as-is
             questionContent.testCases = Array.isArray(parsedCases) ? parsedCases : [parsedCases];
-          } catch (e) {
-            // Fallback: maybe it's not JSON? Log error or ignore
-            questionContent.testCases = [];
-          }
-        } else {
-          questionContent.testCases = [];
+          } catch(e) { }
         }
       }
 
@@ -672,6 +729,28 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
       insertResult = await targetCollection.insertMany(insertedQuestions, {
         ordered: false,
       });
+
+      // Update Company Test Sections
+      if (isTest === "true" || isTest === true) {
+        if (subjectId) {
+          const { companyTests } = require("../../../shared/db/connection").getGlobalCollections();
+          
+          // Extract unique sections/categories from uploaded questions
+          const uploadedSections = new Set();
+          insertedQuestions.forEach(q => {
+            if (q.sectionName) uploadedSections.add(q.sectionName);
+            if (q.concept) uploadedSections.add(q.concept); // Use concept as category if sectionName is not standard
+          });
+
+          const uniqueSections = Array.from(uploadedSections);
+          if (uniqueSections.length > 0) {
+            await companyTests.updateOne(
+              { _id: new ObjectId(subjectId) },
+              { $addToSet: { sections: { $each: uniqueSections } } }
+            );
+          }
+        }
+      }
     }
 
     res.status(200).json({

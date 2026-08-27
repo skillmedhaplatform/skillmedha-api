@@ -138,6 +138,13 @@ app.post("/login", async (req, res) => {
             "Account Deactivated Please contact site administrator"
           );
         }
+
+        // Keep the tenant user's loginCount in sync with the global login count
+        const syncedLoginCount = (findUser.loginCount || 0) + 1;
+        await tenantCollection.updateOne(
+          { _id: tenantUser._id },
+          { $set: { loginCount: syncedLoginCount } }
+        );
       }
     }
 

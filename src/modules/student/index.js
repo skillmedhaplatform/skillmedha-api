@@ -64,6 +64,8 @@ router.post('/startPractice', mandatory, selectTenantDB, practiceSvc.startPracti
 router.post('/savePracResults/:pracId', mandatory, selectTenantDB, practiceSvc.savePracResults);
 router.get('/getStudentPracResults/:userId', mandatory, selectTenantDB, practiceSvc.getStudentPracResults);
 
+const companyTestsSvc = require('../admin/services/companyTests.service');
+router.get('/company-tests', mandatory, selectTenantDB, companyTestsSvc.getCompanyTests);
 
 router.get('/dashboard/stats', mandatory, selectTenantDB, studentCtrl.getDashboardStats);
 
