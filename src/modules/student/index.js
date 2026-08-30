@@ -38,6 +38,10 @@ router.use('/', studentRouter);
 
 router.use('/', atsChecker);
 
+// ─── Practice Tests ────────────────────────────────────────────────────────────
+router.post('/practice/top-scores', mandatory, selectTenantDB, practiceSvc.saveTopMockScore);
+router.get('/practice/top-scores/:testId', mandatory, selectTenantDB, practiceSvc.getTopMockScores);
+
 // ─── Resume ──────────────────────────────────────────────────────────────────
 router.post('/createResume', mandatory, selectTenantDB, resumeSvc.createResume || ((req, res) => res.status(501).json({ error: 'Not implemented' })));
 router.post('/updateResume', mandatory, selectTenantDB, resumeSvc.updateResume || ((req, res) => res.status(501).json({ error: 'Not implemented' })));
@@ -54,6 +58,8 @@ router.get('/getOneAssessmentFromStudent/:assessmentId', mandatory, selectTenant
 router.get('/getJobAssessmentResultsForStudent/:assessmentId/:studentId', mandatory, selectTenantDB, placementsSvc.getJobAssessmentResultsForStudent);
 
 // ─── Practice (student-facing) ────────────────────────────────────────────────
+const compilerCtrl = require('./controllers/compiler.controller');
+router.post('/compiler/run', mandatory, selectTenantDB, compilerCtrl.runCode);
 router.get('/subjects', mandatory, selectTenantDB, practiceSvc.getAllSubjects);
 router.get('/subjects/type/:type', mandatory, selectTenantDB, practiceSvc.getSubjectsByType);
 router.get('/topics/subject/:subjectId', mandatory, selectTenantDB, practiceSvc.getTopicsBySubject);

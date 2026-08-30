@@ -38,8 +38,11 @@ module.exports.getCompanyTests = async (req, res) => {
   try {
     const tests = await companyTests.find({}).sort({ createdAt: -1 }).toArray();
 
-    // Dynamically calculate questionCount and timeLimit from tenant questions collection
-    const { questions } = connectTodb(req.tenantDB);
+    const { getSharedMongoClient } = require("../../../shared/db/connection");
+    const sharedClient = await getSharedMongoClient();
+    const masterDbName = process.env.SHARED_DB_NAME || "KSquare";
+    const masterDb = sharedClient.db(masterDbName);
+    const questions = masterDb.collection("questions");
     const testIds = tests.map(t => t._id);
     
     // Fetch relevant fields for all questions linked to these tests

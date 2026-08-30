@@ -1093,3 +1093,62 @@ module.exports.getStudentPracResults = async (req, res) => {
     res.status(500).json({ err: error.message });
   }
 };
+
+module.exports.saveTopMockScore = async (req, res) => {
+  const { student, mockTestAttempts } = connectTodb(req.tenantDB);
+  try {
+    const { testId, attempt } = req.body;
+    const userId = req.userID;
+
+    if (!testId || !attempt) {
+      return res.status(400).json({ err: "testId and attempt are required" });
+    }
+
+    const covId = new ObjectId(userId);
+    const findStudent = await student.findOne({ _id: covId });
+    if (!findStudent) throw new Error("Student Not Found");
+
+    // Prepare attempt document
+    const attemptDoc = {
+      ...attempt,
+      userId: covId,
+      testId: testId,
+      createdAt: new Date()
+    };
+
+    // Insert into new collection
+    await mockTestAttempts.insertOne(attemptDoc);
+
+    // Fetch all attempts for this user and test
+    const allAttempts = await mockTestAttempts
+      .find({ userId: covId, testId: testId })
+      .sort({ score: -1, timestamp: -1 }) // Top score first, then most recent
+      .toArray();
+
+    res.status(200).json({ msg: "Attempt saved successfully", data: allAttempts });
+  } catch (error) {
+    res.status(500).json({ err: error.message });
+  }
+};
+
+module.exports.getTopMockScores = async (req, res) => {
+  const { student, mockTestAttempts } = connectTodb(req.tenantDB);
+  try {
+    const { testId } = req.params;
+    const userId = req.userID;
+
+    const covId = new ObjectId(userId);
+    const findStudent = await student.findOne({ _id: covId });
+    if (!findStudent) throw new Error("Student Not Found");
+
+    // Fetch all attempts for this user and test
+    const allAttempts = await mockTestAttempts
+      .find({ userId: covId, testId: testId })
+      .sort({ score: -1, timestamp: -1 })
+      .toArray();
+
+    res.status(200).json({ data: allAttempts });
+  } catch (error) {
+    res.status(500).json({ err: error.message });
+  }
+};
