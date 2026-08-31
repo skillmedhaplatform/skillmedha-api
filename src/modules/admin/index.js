@@ -100,6 +100,11 @@ router.put('/marquee/settings', mandatory, marqueeSvc.updateMarqueeSettings);
 router.put('/marquee/:id', mandatory, marqueeSvc.updateMarqueeNotice);
 router.delete('/marquee/:id', mandatory, marqueeSvc.deleteMarqueeNotice);
 
+// ─── Company Tests ────────────────────────────────────────────────────────────
+const companyTestsSvc = require('./services/companyTests.service');
+router.post('/company-tests', mandatory, selectTenantDB, companyTestsSvc.createCompanyTest);
+router.get('/company-tests', mandatory, selectTenantDB, companyTestsSvc.getCompanyTests);
+router.delete('/company-tests/:id', mandatory, selectTenantDB, companyTestsSvc.deleteCompanyTest);
 // ─── Company ──────────────────────────────────────────────────────────────────
 router.post('/createCompany', mandatory, selectTenantDB, companySvc.createCompany);
 router.post('/loginCompany', mandatory, selectTenantDB, companySvc.loginCompany);

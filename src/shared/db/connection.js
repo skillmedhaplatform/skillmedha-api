@@ -139,6 +139,7 @@ function _initGlobalCollections() {
     aiUsageCollection:      db_resources.collection('ai_usage'),
     marqueeNotices:         db.collection('marqueeNotices'),
     chatWidgetUsage:        db_resources.collection('chatWidgetUsage'),
+    companyTests:           db_resources.collection('companyTests'),
   };
 
   return _globalCollections;
@@ -297,6 +298,7 @@ function connectTodb(db) {
       subtopics:               db.collection('subtopics'),
       practiceQuestions:       db.collection('practiceQuestions'),
       pracSessions:            db.collection('PracticeSessions'),
+      mockTestAttempts:        db.collection('mockTestAttempts'),
       cart:                    db.collection('cart'),
       wishlist:                db.collection('wishlist'),
     };
