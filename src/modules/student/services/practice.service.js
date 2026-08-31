@@ -1024,7 +1024,7 @@ module.exports.startPractice = async (req, res) => {
     });
 
     await student.updateOne(
-      { _id: new ObjectId(userId) },
+      { globalId: userId },
       {
         $addToSet: {
           practiceSessions: pracData?.insertedId?.toString(),
@@ -1077,9 +1077,7 @@ module.exports.getStudentPracResults = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    const covId = new ObjectId(userId);
-
-    const findStudent = await student.findOne({ _id: covId });
+    const findStudent = await student.findOne({ globalId: userId });
 
     if (!findStudent) throw new Error("Results Not Found");
 
@@ -1094,7 +1092,7 @@ module.exports.getStudentPracResults = async (req, res) => {
   }
 };
 
-module.exports.saveTopMockScore = async (req, res) => {
+module.exports.saveTopMockScore = async (req, res) => { console.log("saveTopMockScore called:", req.body.testId, typeof req.body.testId);
   const { student, mockTestAttempts } = connectTodb(req.tenantDB);
   try {
     const { testId, attempt } = req.body;
@@ -1104,14 +1102,13 @@ module.exports.saveTopMockScore = async (req, res) => {
       return res.status(400).json({ err: "testId and attempt are required" });
     }
 
-    const covId = new ObjectId(userId);
-    const findStudent = await student.findOne({ _id: covId });
+    const findStudent = await student.findOne({ globalId: userId });
     if (!findStudent) throw new Error("Student Not Found");
 
     // Prepare attempt document
     const attemptDoc = {
       ...attempt,
-      userId: covId,
+      userId: findStudent._id,
       testId: testId,
       createdAt: new Date()
     };
@@ -1121,7 +1118,7 @@ module.exports.saveTopMockScore = async (req, res) => {
 
     // Fetch all attempts for this user and test
     const allAttempts = await mockTestAttempts
-      .find({ userId: covId, testId: testId })
+      .find({ userId: findStudent._id, testId: testId })
       .sort({ score: -1, timestamp: -1 }) // Top score first, then most recent
       .toArray();
 
@@ -1131,19 +1128,18 @@ module.exports.saveTopMockScore = async (req, res) => {
   }
 };
 
-module.exports.getTopMockScores = async (req, res) => {
+module.exports.getTopMockScores = async (req, res) => { console.log("getTopMockScores called:", req.params.testId, typeof req.params.testId);
   const { student, mockTestAttempts } = connectTodb(req.tenantDB);
   try {
     const { testId } = req.params;
     const userId = req.userID;
 
-    const covId = new ObjectId(userId);
-    const findStudent = await student.findOne({ _id: covId });
+    const findStudent = await student.findOne({ globalId: userId });
     if (!findStudent) throw new Error("Student Not Found");
 
     // Fetch all attempts for this user and test
     const allAttempts = await mockTestAttempts
-      .find({ userId: covId, testId: testId })
+      .find({ userId: findStudent._id, testId: testId })
       .sort({ score: -1, timestamp: -1 })
       .toArray();
 
