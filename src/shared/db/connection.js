@@ -127,6 +127,7 @@ function _initGlobalCollections() {
     payment:                db.collection('payment'),
     aiUsageCollection:      db_resources.collection('ai_usage'),
     marqueeNotices:         db.collection('marqueeNotices'),
+    companyTests:           db_resources.collection('companyTests'),
   };
 
   return _globalCollections;
@@ -285,6 +286,7 @@ function connectTodb(db) {
       subtopics:               db.collection('subtopics'),
       practiceQuestions:       db.collection('practiceQuestions'),
       pracSessions:            db.collection('PracticeSessions'),
+      mockTestAttempts:        db.collection('mockTestAttempts'),
       cart:                    db.collection('cart'),
       wishlist:                db.collection('wishlist'),
     };

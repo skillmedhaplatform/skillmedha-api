@@ -430,7 +430,7 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
       return res.status(400).json({ err: "Please upload a file" });
     }
 
-    const { subjectId, skillId, topicId, subTopicId, isTest } = req.query;
+    const { subjectId, skillId, topicId, subTopicId, isTest, uploadType } = req.query;
 
     if (!subjectId && !skillId) {
       return res.status(400).json({ err: "subjectId or skillId is required as query parameter" });
@@ -460,6 +460,11 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
       solution: "explanation",
       difficulty: "difficulty",
       level: "difficulty",
+      concept: "concept",
+      companyname: "companyName",
+      examname: "examName",
+      examyear: "examYear",
+      sectionname: "sectionName",
       scorepoints: "scorePoints",
       score_points: "scorePoints",
       score: "scorePoints",
@@ -481,6 +486,7 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
       correct_answer: "correctAnswer",
       answer: "correctAnswer",
       answers: "correctAnswer",
+      correctanswers: "correctAnswer",
       testcasesjson: "testCasesJSON",
       test_cases_json: "testCasesJSON",
       testcases: "testCasesJSON",
@@ -494,6 +500,22 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
         const schemaField = fieldMapping[normalizedKey];
         if (schemaField) {
           mappedQuestion[schemaField] = rawQuestion[key];
+        } else if (
+          normalizedKey.startsWith("sample") || 
+          normalizedKey.startsWith("hidden") || 
+          normalizedKey === "constraints" || 
+          normalizedKey === "problemstatement" || 
+          normalizedKey === "timelimit"
+        ) {
+          // Auto map without explicitly adding them to fieldMapping
+          const camelKey = normalizedKey
+            .replace('sampleinput', 'sampleInput')
+            .replace('sampleoutput', 'sampleOutput')
+            .replace('hiddeninput', 'hiddenInput')
+            .replace('hiddenoutput', 'hiddenOutput')
+            .replace('problemstatement', 'problemStatement')
+            .replace('timelimit', 'timeLimit');
+          mappedQuestion[camelKey] = rawQuestion[key];
         }
       });
       return mappedQuestion;
@@ -506,11 +528,28 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
     for (let i = 0; i < questionsData.length; i++) {
       const questionData = questionsData[i];
 
-      const questionType = questionData.questionType || "Single Choice"; // Defaulting to Single Choice if missing? Or Text?
+      let questionType = questionData.questionType;
+      
+      // Auto-detect Coding Question from Problem Statement column
+      if (!questionType && questionData.problemStatement) {
+        questionType = "Coding Question";
+      } else if (!questionType) {
+        questionType = "Single Choice"; // default fallback
+      }
+
+      if (uploadType === "coding") {
+        questionType = "Coding Question";
+      } else {
+        const t = String(questionType).toLowerCase();
+        if (t.includes("single")) questionType = "Single Choice";
+        else if (t.includes("multiple")) questionType = "Multiple Choice";
+        else if (t.includes("true") || t.includes("false")) questionType = "True/False";
+        else if (t.includes("coding")) questionType = "Coding Question";
+      }
 
       // 1. Build questionContent
       const questionContent = {
-        question: questionData.questionText || "",
+        question: questionData.questionText || questionData.problemStatement || "",
       };
 
       if (questionData.option1) questionContent["option 1"] = String(questionData.option1).trim();
@@ -527,7 +566,6 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
       const correctAnsRaw = String(questionData.correctAnswer || "").trim();
 
       if (questionType === "Single Choice" || questionType === "Multiple Choice") {
-        // Try to map "Option 1", "1", "A", or exact text to "option N"
         const optionsMap = [
           { key: "option 1", val: questionContent["option 1"] },
           { key: "option 2", val: questionContent["option 2"] },
@@ -535,24 +573,42 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
           { key: "option 4", val: questionContent["option 4"] },
         ];
 
-        const foundOption = optionsMap.find(opt => {
-          return (
-            opt.val === correctAnsRaw || // Exact text match
-            correctAnsRaw.toLowerCase() === opt.key || // "option 1" match
-            correctAnsRaw === opt.key.replace("option ", "") || // "1" match
-            (correctAnsRaw.toLowerCase() === "a" && opt.key === "option 1") ||
-            (correctAnsRaw.toLowerCase() === "b" && opt.key === "option 2") ||
-            (correctAnsRaw.toLowerCase() === "c" && opt.key === "option 3") ||
-            (correctAnsRaw.toLowerCase() === "d" && opt.key === "option 4")
-          );
-        });
+        const matchOption = (ansText) => {
+          const raw = String(ansText || "").trim();
+          return optionsMap.find(opt => {
+            return (
+              opt.val === raw ||
+              raw.toLowerCase() === opt.key ||
+              raw === opt.key.replace("option ", "") ||
+              (raw.toLowerCase() === "a" && opt.key === "option 1") ||
+              (raw.toLowerCase() === "b" && opt.key === "option 2") ||
+              (raw.toLowerCase() === "c" && opt.key === "option 3") ||
+              (raw.toLowerCase() === "d" && opt.key === "option 4")
+            );
+          });
+        };
 
-        if (foundOption) {
-          answer.singleChoice = {
-            [foundOption.key]: true
-          };
-        } else {
-          answer.singleChoice = { "option 1": true };
+        if (questionType === "Single Choice") {
+          const foundOption = matchOption(correctAnsRaw);
+          if (foundOption) {
+            answer.singleChoice = { [foundOption.key]: true };
+          } else {
+            answer.singleChoice = { "option 1": true };
+          }
+        } else if (questionType === "Multiple Choice") {
+          answer.multipleChoice = {};
+          const answers = correctAnsRaw.split(',').map(a => a.trim());
+          let foundAny = false;
+          answers.forEach(ans => {
+            const foundOption = matchOption(ans);
+            if (foundOption) {
+              answer.multipleChoice[foundOption.key] = true;
+              foundAny = true;
+            }
+          });
+          if (!foundAny) {
+            answer.multipleChoice = { "option 1": true };
+          }
         }
       } else if (questionType === "True/False") {
         // Existing schema likely uses same structure or just "answer": true/false?
@@ -592,6 +648,28 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
         isTest: isTest === "true" || isTest === true,
       };
 
+      if (questionData.concept) {
+        questionObj.concept = String(questionData.concept).trim();
+      }
+
+      if (questionData.sectionName) {
+        questionObj.sectionName = String(questionData.sectionName).trim();
+      }
+
+      if (questionData.companyName) {
+        const companyNames = String(questionData.companyName).split(',').map(s => s.trim());
+        const examNames = questionData.examName ? String(questionData.examName).split(',').map(s => s.trim()) : [];
+        const examYears = questionData.examYear ? String(questionData.examYear).split(',').map(s => s.trim()) : [];
+        const sectionNames = questionData.sectionName ? String(questionData.sectionName).split(',').map(s => s.trim()) : [];
+
+        questionObj.companyTags = companyNames.map((cName, i) => ({
+          companyName: cName,
+          examName: examNames[i] || undefined,
+          year: examYears[i] ? Number(examYears[i]) : undefined,
+          sectionName: sectionNames[i] || undefined
+        }));
+      }
+
       // Add optional topicId and subTopicId if provided
       if (topicId) {
         questionObj.topicId = new ObjectId(topicId);
@@ -600,22 +678,42 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
         questionObj.subTopicId = new ObjectId(subTopicId);
       }
 
-      // Handle Coding Question specific fields if they differ from standard schema
-      // The provided "existing schema" was for Single Choice. Coding might be different.
-      // But user wants "bulk upload" so assuming uniformity or specific handling.
       // Handle Coding Question specific fields
       if (questionType === "Coding Question") {
-        if (questionData.testCasesJSON) {
+        const testCases = [];
+        
+        // Extract visible Sample Test Cases (1 to 5)
+        for (let j = 1; j <= 5; j++) {
+          if (questionData[`sampleInput${j}`] || questionData[`sampleOutput${j}`]) {
+            testCases.push({
+              input: questionData[`sampleInput${j}`] || "",
+              output: questionData[`sampleOutput${j}`] || "",
+              isHidden: false
+            });
+          }
+        }
+
+        // Extract Hidden Test Cases (1 to 10)
+        for (let j = 1; j <= 10; j++) {
+          if (questionData[`hiddenInput${j}`] || questionData[`hiddenOutput${j}`]) {
+            testCases.push({
+              input: questionData[`hiddenInput${j}`] || "",
+              output: questionData[`hiddenOutput${j}`] || "",
+              isHidden: true
+            });
+          }
+        }
+        
+        questionContent.testCases = testCases;
+        questionContent.constraints = questionData.constraints || "";
+        questionContent.timeLimit = questionData.timeLimit || "2.0";
+
+        // Fallback for old JSON string format if passed directly
+        if (questionData.testCasesJSON && testCases.length === 0) {
           try {
             const parsedCases = JSON.parse(questionData.testCasesJSON);
-            // Ensure specific structure for each test case if needed, or take as-is
             questionContent.testCases = Array.isArray(parsedCases) ? parsedCases : [parsedCases];
-          } catch (e) {
-            // Fallback: maybe it's not JSON? Log error or ignore
-            questionContent.testCases = [];
-          }
-        } else {
-          questionContent.testCases = [];
+          } catch(e) { }
         }
       }
 
@@ -631,6 +729,28 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
       insertResult = await targetCollection.insertMany(insertedQuestions, {
         ordered: false,
       });
+
+      // Update Company Test Sections
+      if (isTest === "true" || isTest === true) {
+        if (subjectId) {
+          const { companyTests } = require("../../../shared/db/connection").getGlobalCollections();
+          
+          // Extract unique sections/categories from uploaded questions
+          const uploadedSections = new Set();
+          insertedQuestions.forEach(q => {
+            if (q.sectionName) uploadedSections.add(q.sectionName);
+            if (q.concept) uploadedSections.add(q.concept); // Use concept as category if sectionName is not standard
+          });
+
+          const uniqueSections = Array.from(uploadedSections);
+          if (uniqueSections.length > 0) {
+            await companyTests.updateOne(
+              { _id: new ObjectId(subjectId) },
+              { $addToSet: { sections: { $each: uniqueSections } } }
+            );
+          }
+        }
+      }
     }
 
     res.status(200).json({
@@ -771,10 +891,12 @@ module.exports.getQuestionsByTopicAndSubject = async (req, res) => {
   }
 };
 
-module.exports.startPractice = async (req, res) => {
-  const { pracSessions, student } = connectTodb(req.tenantDB);
+module.exports.getDifficultyStats = async (req, res) => {
   try {
-    const { userId, refId, type, limit = 20 } = req.body;
+    const { refId, type, subjectId } = req.query;
+    if (!refId || !type) {
+      return res.status(400).json({ err: "refId and type are required" });
+    }
 
     const isObjId = ObjectId.isValid(refId);
     const covId = isObjId ? new ObjectId(refId) : refId;
@@ -782,6 +904,60 @@ module.exports.startPractice = async (req, res) => {
     const baseQuery = {
       [type]: isObjId ? { $in: [covId, refId.toString()] } : refId,
     };
+
+    let activeQuery = baseQuery;
+    let totalQuestions = await findInAllTenants("questions", baseQuery, "countDocuments");
+
+    if (totalQuestions === 0 && type === "subTopicId" && subjectId) {
+      const subObjId = ObjectId.isValid(subjectId) ? new ObjectId(subjectId) : subjectId;
+      activeQuery = { subjectId: subObjId };
+    }
+
+    // Since findInAllTenants doesn't support complex aggregations across multiple tenants easily in this wrapper,
+    // we'll run 3 separate countDocuments queries.
+    const easyQuery = { ...activeQuery, difficulty: { $regex: new RegExp("^easy$", "i") } };
+    const mediumQuery = { ...activeQuery, difficulty: { $regex: new RegExp("^medium$", "i") } };
+    const hardQuery = { ...activeQuery, difficulty: { $regex: new RegExp("^hard$", "i") } };
+
+    const [easyCount, mediumCount, hardCount] = await Promise.all([
+      findInAllTenants("questions", easyQuery, "countDocuments"),
+      findInAllTenants("questions", mediumQuery, "countDocuments"),
+      findInAllTenants("questions", hardQuery, "countDocuments"),
+    ]);
+
+    res.status(200).json({
+      easy: easyCount,
+      medium: mediumCount,
+      hard: hardCount
+    });
+  } catch (error) {
+    res.status(500).json({ err: error.message });
+  }
+};
+
+module.exports.startPractice = async (req, res) => {
+  const { pracSessions, student } = connectTodb(req.tenantDB);
+  try {
+    let { userId, refId, type, limit = 20, difficulty } = req.body;
+
+    // Apply difficulty limits if difficulty is provided and limit is default
+    if (difficulty && req.body.limit === undefined) {
+      const diffLower = difficulty.toLowerCase();
+      if (diffLower === 'easy') limit = 25;
+      else if (diffLower === 'medium') limit = 20;
+      else if (diffLower === 'hard') limit = 15;
+    }
+
+    const isObjId = ObjectId.isValid(refId);
+    const covId = isObjId ? new ObjectId(refId) : refId;
+
+    const baseQuery = {
+      [type]: isObjId ? { $in: [covId, refId.toString()] } : refId,
+    };
+
+    if (difficulty) {
+      baseQuery.difficulty = { $regex: new RegExp(`^${difficulty}$`, "i") };
+    }
 
     // 1. Get total number of questions available for this subtopic / query
     let totalQuestions = await findInAllTenants("questions", baseQuery, "countDocuments");
@@ -842,6 +1018,7 @@ module.exports.startPractice = async (req, res) => {
       userId: userId,
       refId: refId,
       type: type,
+      difficulty: difficulty,
       questionsData: finalQuestions,
       createdAt: new Date().getTime(),
     });
@@ -912,6 +1089,65 @@ module.exports.getStudentPracResults = async (req, res) => {
       .toArray();
 
     res.status(200).json({ data });
+  } catch (error) {
+    res.status(500).json({ err: error.message });
+  }
+};
+
+module.exports.saveTopMockScore = async (req, res) => {
+  const { student, mockTestAttempts } = connectTodb(req.tenantDB);
+  try {
+    const { testId, attempt } = req.body;
+    const userId = req.userID;
+
+    if (!testId || !attempt) {
+      return res.status(400).json({ err: "testId and attempt are required" });
+    }
+
+    const covId = new ObjectId(userId);
+    const findStudent = await student.findOne({ _id: covId });
+    if (!findStudent) throw new Error("Student Not Found");
+
+    // Prepare attempt document
+    const attemptDoc = {
+      ...attempt,
+      userId: covId,
+      testId: testId,
+      createdAt: new Date()
+    };
+
+    // Insert into new collection
+    await mockTestAttempts.insertOne(attemptDoc);
+
+    // Fetch all attempts for this user and test
+    const allAttempts = await mockTestAttempts
+      .find({ userId: covId, testId: testId })
+      .sort({ score: -1, timestamp: -1 }) // Top score first, then most recent
+      .toArray();
+
+    res.status(200).json({ msg: "Attempt saved successfully", data: allAttempts });
+  } catch (error) {
+    res.status(500).json({ err: error.message });
+  }
+};
+
+module.exports.getTopMockScores = async (req, res) => {
+  const { student, mockTestAttempts } = connectTodb(req.tenantDB);
+  try {
+    const { testId } = req.params;
+    const userId = req.userID;
+
+    const covId = new ObjectId(userId);
+    const findStudent = await student.findOne({ _id: covId });
+    if (!findStudent) throw new Error("Student Not Found");
+
+    // Fetch all attempts for this user and test
+    const allAttempts = await mockTestAttempts
+      .find({ userId: covId, testId: testId })
+      .sort({ score: -1, timestamp: -1 })
+      .toArray();
+
+    res.status(200).json({ data: allAttempts });
   } catch (error) {
     res.status(500).json({ err: error.message });
   }

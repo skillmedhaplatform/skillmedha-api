@@ -95,7 +95,7 @@ async function getStudentCreds(req, res) {
         { studentId: findStudent._id.toString() },
         { projection: { testId: 1, status: 1, scoreData: 1, createdAt: 1, testEndedAt: 1, attemptGeneration: 1 } }
       ).toArray();
-      
+
       if (studentProgress && studentProgress.length > 0) {
         findStudent.progress = studentProgress;
       }
@@ -104,7 +104,7 @@ async function getStudentCreds(req, res) {
     let enhancedAppliedJobs = [];
     if (findStudent && Array.isArray(findStudent.appliedJobs)) {
       const { job, assignedJob } = connectTodb(req.tenantDB);
-      
+
       enhancedAppliedJobs = await Promise.all(
         findStudent.appliedJobs.map(async (appliedJobObj) => {
           let jobDetails = null;
@@ -194,7 +194,7 @@ async function getSingleStudent(req, res) {
         { studentId: findStudent._id.toString() },
         { projection: { testId: 1, status: 1, scoreData: 1, createdAt: 1, testEndedAt: 1, attemptGeneration: 1 } }
       ).toArray();
-      
+
       if (studentProgress && studentProgress.length > 0) {
         findStudent.progress = studentProgress;
       }
@@ -285,6 +285,14 @@ async function loginStudent(req, res) {
       },
       config.auth.jwtSecret
     );
+
+    const updatedLoginCount = (globalUser.loginCount || 1) + 1;
+    await mainDBusers.updateOne({ _id: globalUser._id }, { $set: { loginCount: updatedLoginCount } });
+    if (tenantStudent) {
+      await student.updateOne({ email }, { $set: { loginCount: updatedLoginCount } });
+      tenantStudent.loginCount = updatedLoginCount;
+    }
+    globalUser.loginCount = updatedLoginCount;
 
     res.status(200).json({ success: true, token, data: tenantStudent || globalUser });
   } catch (error) {
@@ -424,7 +432,7 @@ async function getBatches(req, res) {
   try {
     const batchList = await student.distinct('batch');
     const yearList = await student.distinct('yearOfPassing');
-    
+
     const combined = Array.from(
       new Set([
         ...(Array.isArray(batchList) ? batchList : []),
@@ -713,7 +721,7 @@ async function getDashboardStats(req, res) {
         : Promise.resolve(0),
       noticeBoardIds.length > 0
         ? noticeBoard.find({ _id: { $in: noticeBoardIds } })
-            .sort({ createdAt: -1 }).limit(5).toArray()
+          .sort({ createdAt: -1 }).limit(5).toArray()
         : Promise.resolve([]),
     ]);
 

@@ -825,14 +825,16 @@ app.post("/loginStudent", authenticate, selectTenantDB, async (req, res) => {
       secretToken,
     ).toString();
 
+    const updatedLoginCount = (findStudent.loginCount || 1) + 1;
+
     await student.updateOne(
       { _id: findStudent._id },
-      { $set: { token: token } },
+      { $set: { token: token, loginCount: updatedLoginCount } },
     );
 
     res
       .status(200)
-      .send({ msg: "loggedin successfully", ...loginData, token: token });
+      .send({ msg: "loggedin successfully", ...loginData, token: token, loginCount: updatedLoginCount });
   } catch (error) {
     res.status(500).send({ err: error.message });
   }
