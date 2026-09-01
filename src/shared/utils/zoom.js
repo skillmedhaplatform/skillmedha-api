@@ -16,8 +16,9 @@ const { mandatory: authenticate } = require("../middleware/auth.middleware");
 const { selectTenantDB } = require("../middleware/selectTenantDB.middleware");
 const mongoDB = require("mongodb");
 const { getTenantDB } = require("../db/connection");
-const { zoomMeetingsCollection, topicsCollection } = require("../db/connection").getGlobalCollections();
+const logger = require("./logger");
 const router = express.Router();
+
 
 const app = express();
 
@@ -360,8 +361,6 @@ module.exports.signature = (req, res) => {
   try {
     const { meetingNumber, role } = req.body;
 
-    console.log(meetingNumber, role);
-
     if (!meetingNumber || role === undefined) {
       return res
         .status(400)
@@ -381,8 +380,8 @@ module.exports.signature = (req, res) => {
     const signature = jwt.sign(payload, SDK_SECRET, { algorithm: "HS256" });
     return res.json({ signature, sdkKey: SDK_KEY });
   } catch (error) {
-    console.log(error);
-
+    logger.error("Zoom signature generation error:", error);
     res.status(500).json({ err: error.message });
   }
+
 };

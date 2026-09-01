@@ -2,7 +2,8 @@
 require("dotenv").config({
   path: "../../../.env",
 });
-const { RtcTokenBuilder, RtcRole } = require("agora-access-token");
+const { RtcTokenBuilder, RtcRole } = require("agora-token");
+
 const LiveRekognitionProcessor = require("./LiveRekognitionProcessor");
 const AWSVideoProcessor = require("./awsVideoProcessor");
 

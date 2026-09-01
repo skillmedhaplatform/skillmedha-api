@@ -220,6 +220,17 @@ async function getTenantDB(orgId, retryCount = 0) {
       .catch(err => console.warn('[DB] student email index:', err));
     db.collection('student').createIndex({ globalId: 1 }, { background: true })
       .catch(err => console.warn('[DB] student globalId index:', err));
+    db.collection('student').createIndex({ enrollementId: 1 }, { background: true })
+      .catch(err => console.warn('[DB] student enrollementId index:', err));
+    db.collection('proctoringSessions').createIndex({ sessionId: 1 }, { background: true })
+      .catch(err => console.warn('[DB] proctoringSessions sessionId index:', err));
+    db.collection('proctoringSessions').createIndex({ studentId: 1, status: 1 }, { background: true })
+      .catch(err => console.warn('[DB] proctoringSessions student status index:', err));
+    db.collection('assignedTests').createIndex({ studentId: 1, testId: 1 }, { background: true })
+      .catch(err => console.warn('[DB] assignedTests student test index:', err));
+    db.collection('progress').createIndex({ studentId: 1, testId: 1 }, { background: true })
+      .catch(err => console.warn('[DB] progress student test index:', err));
+
 
     global.tenantCache.set(orgId, db);
     return db;

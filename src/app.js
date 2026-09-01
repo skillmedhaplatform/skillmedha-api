@@ -9,8 +9,11 @@ const path = require('path');
 const fs = require('fs');
 const { Server } = require('socket.io');
 const multer = require('multer');
-const { execSync } = require('child_process');
+const { exec } = require('child_process');
+const util = require('util');
+const execAsync = util.promisify(exec);
 const { initializeApolloServer } = require('./modules/test/gql');
+
 // ─── Shared infrastructure ────────────────────────────────────────────────────
 const config = require('./config');
 const logger = require('./shared/utils/logger');
@@ -113,12 +116,28 @@ app.get('/api/public/stats', async (req, res) => {
   }
 });
 
+// ─── Health & Readiness Endpoints ─────────────────────────────────────────────
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'OK', uptime: process.uptime(), timestamp: new Date() });
+});
+
+app.get('/readiness', (req, res) => {
+  try {
+    const { getSharedDB } = require('./shared/db/connection');
+    getSharedDB();
+    res.status(200).json({ status: 'READY', db: 'CONNECTED', timestamp: new Date() });
+  } catch (err) {
+    res.status(503).json({ status: 'NOT_READY', db: 'DISCONNECTED', error: err.message });
+  }
+});
+
+
 // ─── Azure Blob upload endpoints ─────────────────────────────────────────────
-function getAudioDurationInSeconds(filePath) {
+async function getAudioDurationInSeconds(filePath) {
   try {
     const cmd = `"${ffprobePath}" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`;
-    const output = execSync(cmd, { encoding: 'utf8' }).trim();
-    const secs = parseFloat(output);
+    const { stdout } = await execAsync(cmd, { encoding: 'utf8' });
+    const secs = parseFloat(stdout.trim());
     return isNaN(secs) ? 0 : secs;
   } catch (err) {
     logger.error('Failed to get audio duration:', err.message);
@@ -126,10 +145,11 @@ function getAudioDurationInSeconds(filePath) {
   }
 }
 
-function getMaxVolumeInDb(filePath) {
+async function getMaxVolumeInDb(filePath) {
   try {
     const cmd = `"${ffmpegPath}" -hide_banner -i "${filePath}" -af volumedetect -f null - 2>&1`;
-    const output = execSync(cmd, { encoding: 'utf8' });
+    const { stdout, stderr } = await execAsync(cmd, { encoding: 'utf8' }).catch(err => ({ stdout: err.stdout || '', stderr: err.stderr || '' }));
+    const output = (stdout || '') + (stderr || '');
     const match = output.match(/max_volume:\s*(-?\d+(\.\d+)?)/);
     return match ? parseFloat(match[1]) : null;
   } catch (err) {
@@ -138,19 +158,21 @@ function getMaxVolumeInDb(filePath) {
   }
 }
 
-const isAudioSilentOrEmpty = (filePath, { minDuration = 1.0, maxVolumeThreshold = -40 } = {}) => {
-  const duration = getAudioDurationInSeconds(filePath);
-  const maxVolume = getMaxVolumeInDb(filePath);
+const isAudioSilentOrEmpty = async (filePath, { minDuration = 1.0, maxVolumeThreshold = -40 } = {}) => {
+  const duration = await getAudioDurationInSeconds(filePath);
+  const maxVolume = await getMaxVolumeInDb(filePath);
   if (duration < minDuration) return false;
   if (maxVolume === null || maxVolume < maxVolumeThreshold) return false;
   return false;
 };
 
+
 async function transcribeAudio(audio) {
   try {
-    if (isAudioSilentOrEmpty(audio)) {
+    if (await isAudioSilentOrEmpty(audio)) {
       throw new Error("Oops! We couldn't hear you. Please try speaking a bit louder.");
     }
+
     const langDetect = await openai.audio.transcriptions.create({
       file: fs.createReadStream(audio),
       model: 'whisper-1',

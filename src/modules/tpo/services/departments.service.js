@@ -10,7 +10,8 @@ const { connectTodb } = require("../../../shared/db/connection");
 const { mainDBusers } = require("../../../shared/db/connection").getGlobalCollections();
 const XLSX = require("xlsx");
 const fs = require("fs");
-const bcrypt = require("bcrypt");
+const bcrypt = require("bcryptjs");
+
 const { sendVerificationEmail, sendBulkEmails, bulkTransporter } = require("../../../shared/utils/mailVerification");
 const CryptoJS = require("crypto-js");
 const config = require("../../../config");

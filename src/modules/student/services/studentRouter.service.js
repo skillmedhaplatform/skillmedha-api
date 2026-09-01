@@ -17,7 +17,8 @@ require('dotenv').config({ path: require('path').resolve(__dirname, '../../../..
 const express = require('express');
 const { json, urlencoded } = require('express');
 const mongoDB = require('mongodb');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
+
 const CryptoJS = require('crypto-js');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
