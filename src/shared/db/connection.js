@@ -296,6 +296,11 @@ function connectTodb(db) {
   }
 }
 
+function getReviewsDB() {
+  if (!sharedClient) throw new Error('MongoDB client not connected');
+  return sharedClient.db('reviews');
+}
+
 module.exports = {
   getMongoUrl,
   connectSharedDB,
@@ -304,4 +309,5 @@ module.exports = {
   getGlobalCollections,
   getTenantDB,
   connectTodb,
+  getReviewsDB,
 };
