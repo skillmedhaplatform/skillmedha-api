@@ -1,44 +1,184 @@
 /**
  * atsAIService.js
- * Core ATS analysis service using OpenAI GPT-4o.
+ * Core ATS analysis service using Cloudflare Workers AI (same provider already
+ * used across the app in src/shared/utils/ai.js), instead of OpenAI.
  * Handles resume text extraction (PDF/DOCX), AI analysis, and updated resume generation.
  *
  * Required npm packages:
- *   npm install openai pdf-parse mammoth uuid
+ *   npm install pdf-parse mammoth uuid
  *
- * Required environment variables:
- *   OPENAI_API_KEY=sk-...
- *   OPENAI_MODEL=gpt-4o            (recommended — best quality for structured JSON)
- *   OPENAI_FALLBACK_MODEL=gpt-4o-mini  (fallback if primary hits rate limit)
+ * Required environment variables (already configured in .env):
+ *   CLOUDFLARE_ACCOUNT_ID
+ *   CLOUDFLARE_API_TOKEN
+ *   CLOUDFLARE_AI_MODEL        (default text model)
+ *   CLOUDFLARE_AI_MODEL_LARGE  (higher-quality model, used here for analysis)
  *
  * Place this file in your Node.js/Express API repo under: services/atsAIService.js
  */
 
-const OpenAI = require("openai");
 const { PDFParse } = require("pdf-parse");
 const mammoth = require("mammoth");
 const { v4: uuidv4 } = require("uuid");
 
-// CONFIGURE: Set OPENAI_API_KEY in your .env file
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+/*****************************************
+ *  CLOUDFLARE WORKERS AI CLIENT
+ *  (mirrors src/shared/utils/ai.js's runWorkersAI)
+ *****************************************/
 
-// CONFIGURE: Set preferred model. gpt-4o gives best structured JSON quality.
-const PRIMARY_MODEL = process.env.OPENAI_MODEL || "gpt-4o";
-const FALLBACK_MODEL = process.env.OPENAI_FALLBACK_MODEL || "gpt-4o-mini";
+const CF_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
+const CF_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
+const CF_MODEL_DEFAULT =
+  process.env.CLOUDFLARE_AI_MODEL || "@cf/meta/llama-3.1-8b-instruct";
+const CF_MODEL_LARGE =
+  process.env.CLOUDFLARE_AI_MODEL_LARGE ||
+  "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+
+// Cloudflare's free Workers AI tier is a single shared 10,000-neuron/day
+// budget for the whole account, and it's shared with every other AI feature
+// in the app (src/shared/utils/ai.js). The 70b model costs ~5x more neurons
+// per call than the 8b model for this workload (measured: ~250 vs ~53 for
+// the same analysis prompt), so it must not be the default for a
+// high-volume route like resume analysis — use the cheap model as primary,
+// and only escalate to the large model as a last resort on a genuine
+// (non-quota) failure.
+const PRIMARY_MODEL = CF_MODEL_DEFAULT;
+const FALLBACK_MODEL = CF_MODEL_LARGE;
+
+// Mirrors the OpenAI chat-completion response shape (choices[0].message.content,
+// usage.{prompt,completion,total}_tokens) so the rest of this file doesn't change.
+//
+// max_tokens defaults to Workers AI's own default (256) when omitted, which
+// silently truncates the large JSON payload this service asks for — always
+// pass an explicit value here.
+const runWorkersAI = async ({ model, messages, temperature, max_tokens }) => {
+  const url = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai/run/${model}`;
+
+  const body = { messages };
+  if (temperature !== undefined) body.temperature = temperature;
+  if (max_tokens !== undefined) body.max_tokens = max_tokens;
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${CF_API_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  const json = await resp.json();
+
+  if (!resp.ok || json.success === false) {
+    const msg =
+      json?.errors?.[0]?.message || `Workers AI request failed (${resp.status})`;
+    const err = new Error(msg);
+    err.status = resp.status;
+    throw err;
+  }
+
+  const usage = json.result?.usage || {};
+
+  // Cloudflare's OpenAI-compatible endpoint always puts the raw text in
+  // choices[0].message.content. Its top-level `result.response` mirrors that,
+  // but gets silently auto-parsed into a JS *object* whenever the content
+  // looks like JSON (as ours always does) — using it directly here would
+  // hand downstream code an object where a JSON string is expected. Prefer
+  // the guaranteed-string field, only falling back to `response` if a model
+  // build ever omits `choices`.
+  const rawMessage = json.result?.choices?.[0]?.message?.content;
+  const content =
+    typeof rawMessage === "string" && rawMessage.length > 0
+      ? rawMessage
+      : typeof json.result?.response === "string"
+        ? json.result.response
+        : JSON.stringify(json.result?.response ?? "");
+
+  return {
+    choices: [{ message: { content } }],
+    usage: {
+      prompt_tokens: usage.prompt_tokens || 0,
+      completion_tokens: usage.completion_tokens || 0,
+      total_tokens: usage.total_tokens || 0,
+      // The actual billing/quota unit for the free tier — capture it so
+      // callers can self-track spend against the account's shared daily
+      // budget instead of guessing from token counts.
+      neurons: usage.neurons || 0,
+    },
+  };
+};
+
+// Strip ```json ... ``` / ``` ... ``` fences some models wrap JSON in, and
+// drop any leading/trailing prose the model added around the object itself
+// (unlike OpenAI's json_object mode, Workers AI has no forced-JSON option).
+const stripCodeFences = (text) => {
+  let cleaned = (text || "")
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/, "")
+    .replace(/```\s*$/, "")
+    .trim();
+
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) {
+    cleaned = cleaned.slice(start, end + 1);
+  }
+  return cleaned;
+};
+
+/**
+ * Best-effort repair for JSON truncated mid-generation (e.g. the model got
+ * cut off before closing every brace). Walks the string tracking open
+ * strings/objects/arrays, closes an unterminated string, drops a trailing
+ * dangling comma, then closes every still-open `{`/`[` in the correct
+ * order. This can't fix genuinely malformed JSON (missing commas,
+ * unescaped control characters mid-structure), only recover the tail end
+ * of an otherwise well-formed object that stopped short.
+ */
+const attemptJsonRepair = (text) => {
+  const stack = [];
+  let inString = false;
+  let escapeNext = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    if (ch === "\\" && inString) {
+      escapeNext = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{" || ch === "[") {
+      stack.push(ch);
+    } else if (ch === "}" && stack[stack.length - 1] === "{") {
+      stack.pop();
+    } else if (ch === "]" && stack[stack.length - 1] === "[") {
+      stack.pop();
+    }
+  }
+
+  let repaired = text;
+  if (inString) repaired += '"';
+  repaired = repaired.replace(/,\s*$/, "");
+  for (let i = stack.length - 1; i >= 0; i--) {
+    repaired += stack[i] === "{" ? "}" : "]";
+  }
+  return repaired;
+};
 
 // Max characters of resume text to send to AI (prevent token limit issues)
 const MAX_RESUME_TEXT_CHARS = 8000;
 // Max characters of job description to include
 const MAX_JD_CHARS = 3000;
 // Below this many characters, a PDF's embedded text layer is considered
-// absent/unusable (e.g. an image-only or scanned PDF) and the page is sent
-// to the AI as an image instead (see renderPDFPagesAsImages below).
+// absent/unusable (e.g. an image-only or scanned PDF).
 const MIN_USABLE_TEXT_LENGTH = 50;
-// Cap image-based analysis to the first N pages so a pathological
-// multi-page scan can't blow up the request payload/cost.
-const MAX_VISION_PAGES = 3;
 
 // ── Text extraction helpers ────────────────────────────────────────────────
 
@@ -52,26 +192,6 @@ const extractTextFromPDF = async (buffer) => {
   try {
     const result = await parser.getText();
     return result.text || "";
-  } finally {
-    await parser.destroy();
-  }
-};
-
-/**
- * Render a PDF's pages to PNG images (as base64 data URLs) for PDFs with no
- * usable embedded text layer — e.g. resumes exported as a rasterized image
- * (this app's own Resume Builder does this via html2canvas + jsPDF), or
- * genuinely scanned documents. GPT-4o reads these directly via its vision
- * input, so no local OCR library is needed.
- * @param {Buffer} buffer
- * @returns {Promise<string[]>} data: URLs, one per rendered page
- */
-const renderPDFPagesAsImages = async (buffer) => {
-  const parser = new PDFParse({ data: buffer });
-  try {
-    const screenshot = await parser.getScreenshot({ scale: 2 });
-    const pages = (screenshot.pages || []).slice(0, MAX_VISION_PAGES);
-    return pages.map((page) => `data:image/png;base64,${page.data.toString("base64")}`);
   } finally {
     await parser.destroy();
   }
@@ -181,8 +301,7 @@ Return ONLY a valid JSON object matching this exact schema (no markdown, no extr
     }
   ],
   "strengths": ["<strength 1>", "<strength 2>"],
-  "criticalIssues": ["<critical issue 1>", "<critical issue 2>"],
-  "updatedResumeContent": "<full improved resume text with ALL suggestions applied>"
+  "criticalIssues": ["<critical issue 1>", "<critical issue 2>"]
 }
 
 IMPORTANT RULES:
@@ -190,9 +309,10 @@ IMPORTANT RULES:
 - Sort suggestions by priority (high first) then by impact (highest first)
 - The "original" field must contain exact text from the resume (for diff display)
 - The "suggested" field must be clearly better and ATS-optimized
-- "updatedResumeContent" must be a complete, formatted resume with all suggestions integrated
 - Be specific and actionable — avoid vague advice like "improve your skills section"
 - Focus on changes that will meaningfully improve ATS parsing and keyword matching
+- Do not include any field other than the ones in the schema above — in
+  particular, do not generate a full rewritten resume
 `;
 
 /**
@@ -208,32 +328,6 @@ const buildUserMessage = (resumeText, jobDescription) => {
   }
 
   return message;
-};
-
-/**
- * Build the OpenAI user message content. Returns a plain string for normal
- * text-based resumes (unchanged behavior), or a multimodal content array
- * (text + page images) when the resume has no text layer and must be read
- * via GPT-4o's vision input instead.
- */
-const buildUserContent = (resumeText, jobDescription, images) => {
-  const hasImages = Array.isArray(images) && images.length > 0;
-
-  const textPart = buildUserMessage(
-    hasImages
-      ? "(This resume file has no embedded text layer — it was provided as an image. Read the resume content directly from the attached image(s) below and analyze it exactly as you would extracted text.)"
-      : resumeText,
-    jobDescription
-  );
-
-  if (!hasImages) {
-    return textPart;
-  }
-
-  return [
-    { type: "text", text: textPart },
-    ...images.map((url) => ({ type: "image_url", image_url: { url } })),
-  ];
 };
 
 /**
@@ -272,21 +366,42 @@ const getGrade = (score) => {
   return "F";
 };
 
+// Must match the SuggestionSchema enums in models/ATSAnalysis.js — a
+// suggestion outside these (whether from JSON-repair truncating it mid-way,
+// or the model just not following the schema) would otherwise fail
+// Mongoose validation when the analysis is saved.
+const VALID_SUGGESTION_CATEGORIES = new Set([
+  "keywords", "formatting", "sections", "readability",
+  "actionVerbs", "quantification", "contact", "summary",
+  "experience", "education", "skills",
+]);
+const VALID_SUGGESTION_PRIORITIES = new Set(["high", "medium", "low"]);
+
 /**
- * Assign unique IDs to suggestions if missing.
+ * Assign unique IDs to suggestions if missing, and drop any that don't
+ * satisfy the required schema fields (e.g. the last entry in a
+ * JSON-repaired, truncated response).
  */
 const normalizeSuggestions = (suggestions) => {
   if (!Array.isArray(suggestions)) return [];
-  return suggestions.map((s, i) => ({
-    ...s,
-    id: s.id || `sug_${String(i + 1).padStart(3, "0")}`,
-  }));
+  return suggestions
+    .filter(
+      (s) =>
+        s &&
+        typeof s.title === "string" && s.title.trim() &&
+        VALID_SUGGESTION_CATEGORIES.has(s.category) &&
+        VALID_SUGGESTION_PRIORITIES.has(s.priority)
+    )
+    .map((s, i) => ({
+      ...s,
+      id: s.id || `sug_${String(i + 1).padStart(3, "0")}`,
+    }));
 };
 
 // ── Main Analysis Function ─────────────────────────────────────────────────
 
 /**
- * Run full ATS analysis on a resume using GPT-4o.
+ * Run full ATS analysis on a resume using Cloudflare Workers AI.
  *
  * @param {Buffer} fileBuffer - Resume file buffer
  * @param {string} mimeType - MIME type of the file
@@ -297,28 +412,11 @@ const normalizeSuggestions = (suggestions) => {
 const analyzeResume = async (fileBuffer, mimeType, fileName, jobDescription = "") => {
   const startTime = Date.now();
 
-  const ext = (fileName || "").split(".").pop().toLowerCase();
-  const isPDF = mimeType === "application/pdf" || ext === "pdf";
-
   // Step 1: Extract text from file
   const extractedText = await extractResumeText(fileBuffer, mimeType, fileName);
   const hasUsableText = !!extractedText && extractedText.trim().length >= MIN_USABLE_TEXT_LENGTH;
 
-  // No usable text layer — likely an image-only/scanned PDF (this app's own
-  // Resume Builder exports resumes exactly this way via html2canvas + jsPDF).
-  // Render the pages and let GPT-4o's vision input read them directly
-  // instead of failing — no OCR library required.
-  let resumeImages = [];
-  if (!hasUsableText && isPDF) {
-    console.warn("[ATSAIService] PDF has no selectable text layer, falling back to image-based analysis.");
-    try {
-      resumeImages = await renderPDFPagesAsImages(fileBuffer);
-    } catch (renderErr) {
-      console.error("[ATSAIService] Failed to render PDF pages as images:", renderErr.message);
-    }
-  }
-
-  if (!hasUsableText && resumeImages.length === 0) {
+  if (!hasUsableText) {
     console.error(
       "[ATSAIService] Insufficient text extracted.",
       {
@@ -335,40 +433,36 @@ const analyzeResume = async (fileBuffer, mimeType, fileName, jobDescription = ""
     );
   }
 
-  const userContent = buildUserContent(extractedText, jobDescription, resumeImages);
+  const userContent = buildUserMessage(extractedText, jobDescription);
 
-  // Step 2: Call OpenAI GPT-4o for analysis
+  // Step 2: Call Cloudflare Workers AI for analysis
   let response;
   let usedModel = PRIMARY_MODEL;
 
-  // Quota exhaustion is account-wide, not per-model — a fallback-model retry
-  // will hit the same wall, so it's treated as terminal, not something to
-  // silently swallow like a plain rate limit.
+  // Quota exhaustion is account-wide (shared across every model and every AI
+  // feature in the app), so retrying on a different model won't help and
+  // just burns another chunk of the same exhausted budget — fail fast
+  // instead. Only escalate to the (expensive) fallback model on a genuine,
+  // non-quota failure of the primary model.
   const isQuotaError = (err) =>
-    err?.status === 429 ||
-    err?.code === "insufficient_quota" ||
-    /quota/i.test(err?.message || "");
+    err?.status === 429 || /quota|rate.?limit/i.test(err?.message || "");
 
   try {
     try {
-      response = await openai.chat.completions.create({
+      response = await runWorkersAI({
         model: PRIMARY_MODEL,
         messages: [
           { role: "system", content: buildSystemPrompt() },
           { role: "user", content: userContent },
         ],
-        temperature: 0.3,         // Lower temperature for more consistent, structured output
-        max_tokens: 4096,
-        response_format: { type: "json_object" }, // Force JSON output (GPT-4o supports this)
+        temperature: 0.3, // Lower temperature for more consistent, structured output
+        max_tokens: 4096, // Schema + suggestions + full updated resume needs the full budget
       });
     } catch (primaryError) {
-      // Fallback to cheaper model on rate limit / quota errors — this only
-      // helps for a per-model rate limit; a fully exhausted account quota
-      // will fail the fallback call too, and that's handled below.
-      if (isQuotaError(primaryError) && FALLBACK_MODEL !== PRIMARY_MODEL) {
-        console.warn(`[ATSAIService] Primary model ${PRIMARY_MODEL} failed, falling back to ${FALLBACK_MODEL}`);
+      if (!isQuotaError(primaryError) && FALLBACK_MODEL !== PRIMARY_MODEL) {
+        console.warn(`[ATSAIService] Primary model ${PRIMARY_MODEL} failed (${primaryError.message}), falling back to ${FALLBACK_MODEL}`);
         usedModel = FALLBACK_MODEL;
-        response = await openai.chat.completions.create({
+        response = await runWorkersAI({
           model: FALLBACK_MODEL,
           messages: [
             { role: "system", content: buildSystemPrompt() },
@@ -376,7 +470,6 @@ const analyzeResume = async (fileBuffer, mimeType, fileName, jobDescription = ""
           ],
           temperature: 0.3,
           max_tokens: 4096,
-          response_format: { type: "json_object" },
         });
       } else {
         throw primaryError;
@@ -384,7 +477,7 @@ const analyzeResume = async (fileBuffer, mimeType, fileName, jobDescription = ""
     }
   } catch (err) {
     if (isQuotaError(err)) {
-      console.error("[ATSAIService] OpenAI quota exhausted:", err.message);
+      console.error("[ATSAIService] Workers AI quota exhausted:", err.message);
       throw new Error(
         "Our AI resume analyzer has reached its usage limit for now. Please try again later."
       );
@@ -393,7 +486,7 @@ const analyzeResume = async (fileBuffer, mimeType, fileName, jobDescription = ""
   }
 
   // Step 3: Parse and validate the JSON response
-  const rawContent = response.choices[0]?.message?.content;
+  const rawContent = stripCodeFences(response.choices[0]?.message?.content);
   if (!rawContent) {
     throw new Error("AI returned an empty response. Please try again.");
   }
@@ -402,8 +495,23 @@ const analyzeResume = async (fileBuffer, mimeType, fileName, jobDescription = ""
   try {
     parsedAnalysis = JSON.parse(rawContent);
   } catch (parseError) {
-    console.error("[ATSAIService] Failed to parse AI response:", rawContent.slice(0, 200));
-    throw new Error("AI returned an invalid response format. Please try again.");
+    // Likely truncated mid-generation (e.g. hit max_tokens on a long
+    // resume/JD) rather than genuinely malformed — try to recover it
+    // before giving up.
+    try {
+      parsedAnalysis = JSON.parse(attemptJsonRepair(rawContent));
+      console.warn("[ATSAIService] AI response required JSON repair (likely truncated).");
+    } catch (repairError) {
+      console.error(
+        "[ATSAIService] Failed to parse AI response.",
+        {
+          length: rawContent.length,
+          head: rawContent.slice(0, 200),
+          tail: rawContent.slice(-200),
+        }
+      );
+      throw new Error("AI returned an invalid response format. Please try again.");
+    }
   }
 
   // Step 4: Normalize and validate response structure
@@ -426,22 +534,15 @@ const analyzeResume = async (fileBuffer, mimeType, fileName, jobDescription = ""
     criticalIssues: Array.isArray(parsedAnalysis.criticalIssues)
       ? parsedAnalysis.criticalIssues.slice(0, 6)
       : [],
-    updatedResumeContent: parsedAnalysis.updatedResumeContent || "",
   };
 
   const processingTimeMs = Date.now() - startTime;
 
-  // When the resume was read via image (no text layer), fall back to the
-  // AI's own transcription so re-analysis/regeneration later still has real
-  // text to work from instead of an empty string.
-  const finalExtractedText = hasUsableText
-    ? extractedText
-    : (analysis.updatedResumeContent || extractedText || "");
-
   return {
     analysis,
-    extractedText: finalExtractedText,
+    extractedText,
     tokensUsed: response.usage?.total_tokens || 0,
+    neuronsUsed: response.usage?.neurons || 0,
     processingTimeMs,
     model: usedModel,
   };
@@ -451,7 +552,7 @@ const analyzeResume = async (fileBuffer, mimeType, fileName, jobDescription = ""
 
 /**
  * Generate updated resume content with only the "kept" suggestions applied.
- * Re-calls GPT to apply selective changes rather than using the bulk updatedResumeContent.
+ * Re-calls the AI to apply selective changes rather than using the bulk updatedResumeContent.
  *
  * @param {string} originalResumeText - Extracted text of original resume
  * @param {Array} suggestions - All suggestions from original analysis
@@ -489,7 +590,7 @@ ${originalResumeText.slice(0, MAX_RESUME_TEXT_CHARS)}
 
 Return only the complete updated resume text, properly formatted.`;
 
-  const response = await openai.chat.completions.create({
+  const response = await runWorkersAI({
     model: PRIMARY_MODEL,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.2,

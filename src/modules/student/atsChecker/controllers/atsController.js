@@ -29,6 +29,97 @@ const validateAnalysisId = (analysisId) => {
   return null;
 };
 
+// ── AI usage guard ───────────────────────────────────────────────────────
+// This is a free (unpaid) Cloudflare Workers AI account: a single shared
+// 10,000-neuron/day budget for the WHOLE account, used by every AI feature
+// in the app (src/shared/utils/ai.js), not just this one — and on the free
+// plan, once it's gone for the day requests just start failing (no
+// overage billing to fall back on). We have no read access to Cloudflare's
+// live usage meter (the configured API token is scoped to run inference
+// only, not account analytics), so this guards the shared budget with our
+// own accounting instead, tracked in one consistent unit — neurons, the
+// real thing being rationed — rather than a flat request count:
+//
+//   1. A hard global daily neuron cap *for this feature*, summed from the
+//      real `neurons` value Cloudflare returns on every call (persisted as
+//      ATSAnalysis.neuronsUsed) — reserving the rest of the 10,000/day for
+//      every other AI feature sharing the account. This is the backstop
+//      that can never be exceeded, no matter how few students are active.
+//
+//   2. A per-student daily neuron allowance that is NOT a fixed number —
+//      it's tiered against how much of that global budget is still
+//      unspent. A flat "3 analyses/student/day" wastes capacity on a quiet
+//      day (one active student gets turned away at 3 while the shared pool
+//      sits 95% unused) and is still too generous on a busy day (30
+//      students at 3 each could still exhaust the pool). Scaling the
+//      per-student share to remaining headroom fixes both: generous when
+//      the account is barely touched, automatically tightening as it
+//      fills up so late-day students aren't locked out by early heavy
+//      users, and the hard global cap is what ultimately protects the
+//      account either way.
+//
+// Cloudflare's own daily quota resets at 00:00 UTC, so "today" here is
+// computed in UTC to stay aligned with it.
+const ATS_DAILY_NEURON_BUDGET = parseInt(process.env.ATS_DAILY_NEURON_BUDGET || "4000", 10);
+
+// Tiers checked in order (most headroom first) — the first one whose
+// threshold the *remaining* budget fraction still clears wins. Roughly
+// 40-50 neurons/analysis on the cheap model, so these translate to about
+// 10 / 5 / 2 / 1 analyses per student per day at each tier.
+const PER_STUDENT_NEURON_TIERS = [
+  { remainingFractionAtLeast: 0.5, allowance: 500 },
+  { remainingFractionAtLeast: 0.2, allowance: 250 },
+  { remainingFractionAtLeast: 0.05, allowance: 100 },
+  { remainingFractionAtLeast: 0, allowance: 50 },
+];
+
+const getPerStudentNeuronAllowance = (remainingFraction) => {
+  const tier = PER_STUDENT_NEURON_TIERS.find((t) => remainingFraction >= t.remainingFractionAtLeast);
+  return tier.allowance;
+};
+
+const getStartOfTodayUTC = () => {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+};
+
+const sumNeuronsToday = async (match) => {
+  const startOfDayUTC = getStartOfTodayUTC();
+  const result = await ATSAnalysis.aggregate([
+    { $match: { ...match, createdAt: { $gte: startOfDayUTC } } },
+    { $group: { _id: null, total: { $sum: "$neuronsUsed" } } },
+  ]);
+  return result[0]?.total || 0;
+};
+
+/**
+ * Checks both usage guards in one pass. Returns null if the request may
+ * proceed, or a { message } object describing which cap was hit.
+ */
+const checkAIUsageGuards = async (studentId) => {
+  const [studentNeuronsToday, globalNeuronsToday] = await Promise.all([
+    sumNeuronsToday({ studentId }),
+    sumNeuronsToday({}),
+  ]);
+
+  if (globalNeuronsToday >= ATS_DAILY_NEURON_BUDGET) {
+    return {
+      message: "Our AI resume analyzer has reached its usage limit for now. Please try again later.",
+    };
+  }
+
+  const remainingFraction = (ATS_DAILY_NEURON_BUDGET - globalNeuronsToday) / ATS_DAILY_NEURON_BUDGET;
+  const studentAllowance = getPerStudentNeuronAllowance(remainingFraction);
+
+  if (studentNeuronsToday >= studentAllowance) {
+    return {
+      message: "You've reached today's fair-share limit for resume analysis, since a lot of students are using it right now. Please try again later today or tomorrow.",
+    };
+  }
+
+  return null;
+};
+
 // ── POST /ats/analyze ─────────────────────────────────────────────────────
 /**
  * Analyze uploaded resume with AI.
@@ -52,10 +143,15 @@ const analyzeResume = async (req, res) => {
       });
     }
 
+    const usageGuardHit = await checkAIUsageGuards(studentId);
+    if (usageGuardHit) {
+      return res.status(429).json({ success: false, message: usageGuardHit.message });
+    }
+
     const jobDescription = (req.body.jobDescription || "").slice(0, 5000).trim();
 
     // ── 2. Run AI analysis ──────────────────────────────────────────────
-    const { analysis, extractedText, tokensUsed, processingTimeMs, model } =
+    const { analysis, extractedText, tokensUsed, neuronsUsed, processingTimeMs, model } =
       await atsAIService.analyzeResume(
         req.file.buffer,
         req.file.mimetype,
@@ -113,6 +209,7 @@ const analyzeResume = async (req, res) => {
       updatedResumeUrl: null,
       aiModel: model,
       tokensUsed,
+      neuronsUsed,
       processingTimeMs: Date.now() - startTime,
       status: "complete",
     });
@@ -176,6 +273,11 @@ const analyzeExistingResume = async (req, res) => {
       });
     }
 
+    const usageGuardHit = await checkAIUsageGuards(studentId);
+    if (usageGuardHit) {
+      return res.status(429).json({ success: false, message: usageGuardHit.message });
+    }
+
     // ── 2. Download file from Azure Blob Storage ───────────────────────
     let fileBuffer, fileName, mimeType;
     try {
@@ -193,7 +295,7 @@ const analyzeExistingResume = async (req, res) => {
     }
 
     // ── 3. Run AI analysis ──────────────────────────────────────────────
-    const { analysis, extractedText, tokensUsed, processingTimeMs, model } =
+    const { analysis, extractedText, tokensUsed, neuronsUsed, processingTimeMs, model } =
       await atsAIService.analyzeResume(
         fileBuffer,
         mimeType,
@@ -229,6 +331,7 @@ const analyzeExistingResume = async (req, res) => {
       updatedResumeUrl: null,
       aiModel: model,
       tokensUsed,
+      neuronsUsed,
       processingTimeMs: Date.now() - startTime,
       status: "complete",
     });
