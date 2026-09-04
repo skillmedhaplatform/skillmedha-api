@@ -145,7 +145,6 @@ module.exports.getStudentsInDepartments = async (req, res) => {
     return res.status(500).json({ error: "No tenant DB available" });
   try {
     const { departmentId } = req.params;
-    console.log(departmentId);
 
     const findDepartment = await departments.findOne({
       _id: new ObjectId(departmentId),

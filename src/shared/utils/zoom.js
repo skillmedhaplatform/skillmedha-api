@@ -239,7 +239,6 @@ module.exports.getMeetingDetails = async (req, res) => {
       });
       findMeeting.liveStatus = zoomReq.data.status;
     } catch (err) {
-      console.log("Error fetching live zoom status:", err?.response?.data || err.message);
       // Fallback if the Zoom API call fails
       findMeeting.liveStatus = "unknown";
     }
@@ -360,8 +359,6 @@ module.exports.signature = (req, res) => {
   try {
     const { meetingNumber, role } = req.body;
 
-    console.log(meetingNumber, role);
-
     if (!meetingNumber || role === undefined) {
       return res
         .status(400)
@@ -381,8 +378,6 @@ module.exports.signature = (req, res) => {
     const signature = jwt.sign(payload, SDK_SECRET, { algorithm: "HS256" });
     return res.json({ signature, sdkKey: SDK_KEY });
   } catch (error) {
-    console.log(error);
-
     res.status(500).json({ err: error.message });
   }
 };

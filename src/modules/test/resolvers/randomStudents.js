@@ -50,7 +50,6 @@ const resolvers = {
     progress: async (parent) => {
       if (!parent.progress) return [];
       const ids = parent.progress;
-      console.log(parent.progress);
 
       let res = [];
       try {

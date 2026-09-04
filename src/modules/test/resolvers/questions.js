@@ -40,14 +40,6 @@ const resolvers = {
             })
             .limit(newLimit)
             .toArray();
-          console.log(
-            await questions
-              .find({
-                $and: [query, { category: { $in: categoryIds } }],
-              })
-
-              .toArray()
-          );
         }
         if (questionType && questionType !== null) {
           data = await questions
@@ -58,7 +50,6 @@ const resolvers = {
 
         return data;
       } catch (error) {
-        console.log(error);
         return { err: error.message };
       }
     },

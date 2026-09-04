@@ -19,10 +19,8 @@ const resolvers = {
     },
     instructor: async (_, args) => {
       try {
-        console.log(args);
         const id = new mongoDB.ObjectId(args.id);
         const data = await instructor.findOne({ _id: id });
-        console.log(data);
         return data;
       } catch (error) {
         return { err: error.message };

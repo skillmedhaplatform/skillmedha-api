@@ -184,7 +184,6 @@ app.post("/login", async (req, res) => {
       orgId: findUser.orgId,
       loginStreak,
     };
-console.log(loginData)
     const token = jwt.sign(loginData, process.env.JWT_SECRET);
 
     await mainDBusers.updateOne(
@@ -558,7 +557,6 @@ app.post("/getAllDepartmentsFromOrgs", authenticate, async (req, res) => {
         const { departments } = connectTodb(tenantDB);
         const data = await departments.find({}).toArray();
 
-        console.log(currentOrgId);
         return {
           orgId: currentOrgId,
           departments: data,
@@ -587,7 +585,6 @@ app.post(
 
   async (req, res) => {
     const { orgId } = req;
-    console.log(orgId);
 
     // Authorization check
     if (orgId !== "skill_688b1cce42c5e979f72d97d4" && orgId !== "KSquare") {
@@ -683,9 +680,7 @@ app.get(
           findOrg = await organisation.findOne({
             _id: new ObjectId(targetOrgId),
           });
-        } catch (err) {
-          console.log("Not a valid ObjectId:", err.message);
-        }
+        } catch (err) {}
       }
 
       if (!findOrg) {
@@ -1271,14 +1266,11 @@ app.get("/getOrganisationStats/:orgId", authenticate, async (req, res) => {
         orgDetails = await organisation.findOne({
           _id: new ObjectId(requestOrgId),
         });
-      } catch (err) {
-        console.log("Not a valid ObjectId:", err.message);
-      }
+      } catch (err) {}
     }
 
     if (!orgDetails) {
       const allOrgs = await organisation.find({}).toArray();
-      console.log("Available organizations:", allOrgs);
 
       return res.status(404).json({
         err: "Organization not found",
@@ -1286,13 +1278,6 @@ app.get("/getOrganisationStats/:orgId", authenticate, async (req, res) => {
         availableOrgs: allOrgs.map((o) => ({ orgId: o.orgId, type: o.type })),
       });
     }
-
-    console.log(
-      "Found organization:",
-      orgDetails.orgId,
-      "Type:",
-      orgDetails.type
-    );
 
     const targetOrgId = orgDetails.orgId;
     const orgType = orgDetails.type || "college";
@@ -1318,8 +1303,6 @@ app.get("/getOrganisationStats/:orgId", authenticate, async (req, res) => {
 
     // ========== COMPANY ORGANIZATION ==========
     if (orgType === "company") {
-      console.log("Fetching company organization stats...");
-
       // Connect to company-specific collections
       const usersCollection = tenantDB.collection("users");
       const jobsCollection = tenantDB.collection("job");
@@ -1504,9 +1487,7 @@ app.get("/getOrganisationStats/:orgId", authenticate, async (req, res) => {
             },
           ])
           .toArray();
-      } catch (err) {
-        console.log("Job categories not available:", err.message);
-      }
+      } catch (err) {}
 
       // Process job stats
       const jobStatusMap = {};
@@ -1615,9 +1596,6 @@ app.get("/getOrganisationStats/:orgId", authenticate, async (req, res) => {
         },
       };
     } else {
-      // ========== COLLEGE/EDUCATIONAL ORGANIZATION ==========
-      console.log("Fetching educational organization stats...");
-
       const { tpo, departments, student, users } = connectTodb(tenantDB);
 
       const [
@@ -1874,7 +1852,6 @@ app.patch("/updateOrganisationFeatures/:orgId", async (req, res) => {
         err: "Features object is required",
       });
     }
-    console.log(authOrgId, requestOrgId);
 
     // Authorization check
     const authorizedOrgs = ["skill_688b1cce42c5e979f72d97d4", "KSquare"];
@@ -1894,9 +1871,7 @@ app.patch("/updateOrganisationFeatures/:orgId", async (req, res) => {
         orgDetails = await organisation.findOne({
           _id: new ObjectId(requestOrgId),
         });
-      } catch (err) {
-        console.log("Not a valid ObjectId:", err.message);
-      }
+      } catch (err) {}
     }
 
     if (!orgDetails) {
@@ -1961,7 +1936,6 @@ app.post("/updateOrganization/:orgId", authenticate, async (req, res) => {
 
     // Query by orgId field (NOT _id)
     const orgData = await organisation.findOne({ orgId: orgId });
-    console.log("Found organization:", orgData);
 
     if (!orgData) {
       return res.status(404).json({
@@ -2309,7 +2283,6 @@ app.delete("/deleteOrginaztion/:orgId", authenticate, async (req, res) => {
   try {
     const { orgId } = req.params;
     const { role, isAdmin } = req;
-    console.log(isAdmin);
 
     // Authorization check
     if (role !== "ADMIN") {
@@ -2320,7 +2293,6 @@ app.delete("/deleteOrginaztion/:orgId", authenticate, async (req, res) => {
 
     // Query by orgId field (NOT _id)
     const orgData = await organisation.findOne({ orgId: orgId });
-    console.log("Found organization:", orgData);
 
     if (!orgData) {
       return res.status(404).json({

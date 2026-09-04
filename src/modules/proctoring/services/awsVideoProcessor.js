@@ -25,6 +25,7 @@ const azureBlobService = require("../../../shared/utils/azureBlobService");
 
 class AWSVideoProcessor {
   constructor() {
+    console.log("🔧 Configuring AWS SDK v3 (Rekognition) + Azure Blob...");
     this.rekognitionClient = new RekognitionClient({
       region: process.env.AWS_REGION,
       credentials: {
@@ -32,6 +33,8 @@ class AWSVideoProcessor {
         secretAccessKey: process.env.AWS_REKOG_SECRET,
       },
     });
+    console.log("✅ AWS Rekognition + Azure Blob configured successfully");
+    console.log(`📍 Region: ${process.env.AWS_REGION || "ap-south-1"}`);
 
     // --- AWS S3 client (kept for reference) ---
     // this.s3Client = new S3Client({
@@ -50,8 +53,6 @@ class AWSVideoProcessor {
   // Start recording session
   async startRecording(sessionId, studentId) {
     try {
-      console.log(`📹 Starting recording for session ${sessionId}`);
-
       const recordingData = {
         sessionId,
         studentId,
@@ -83,8 +84,6 @@ class AWSVideoProcessor {
         throw new Error("No active recording found for session");
       }
 
-      console.log(`🎬 Processing video frame for session ${sessionId}`);
-
       // Store frame data
       recording.frames.push({
         timestamp,
@@ -107,7 +106,6 @@ class AWSVideoProcessor {
 
       if (violations.length > 0) {
         recording.violations.push(...violations);
-        console.log(`🚨 Violations detected in frame:`, violations);
       }
 
       // Store frame in Azure Blob (async)
@@ -384,7 +382,6 @@ class AWSVideoProcessor {
         }
       );
 
-      console.log(`✅ Frame stored in Azure Blob: ${frameKey}`);
       return frameKey;
     } catch (error) {
       console.error("❌ Azure Blob frame storage failed:", error);
@@ -398,8 +395,6 @@ class AWSVideoProcessor {
       if (!recording) {
         throw new Error("No active recording found for session");
       }
-
-      console.log(`🎤 Processing audio chunk for session ${sessionId}`);
 
       // Store audio chunk
       recording.audioChunks.push({
@@ -447,8 +442,6 @@ class AWSVideoProcessor {
           studentId: recording.studentId.toString(),
         }
       );
-
-      console.log(`✅ Audio chunk stored in Azure Blob: ${audioKey}`);
     } catch (error) {
       console.error("❌ Azure Blob audio storage failed:", error);
     }
@@ -461,8 +454,6 @@ class AWSVideoProcessor {
       if (!recording) {
         throw new Error("No active recording found for session");
       }
-
-      console.log(`🛑 Ending recording for session ${sessionId}`);
 
       recording.endTime = new Date();
       recording.duration = recording.endTime - recording.startTime;
@@ -492,8 +483,6 @@ class AWSVideoProcessor {
 
       // Clean up active recording
       this.activeRecordings.delete(sessionId);
-
-      console.log(`✅ Recording completed and stored: ${summaryKey}`);
 
       return {
         success: true,
@@ -537,10 +526,6 @@ class AWSVideoProcessor {
 
   async startLiveStreamProcessing(sessionId, studentId) {
     try {
-      console.log(
-        `📡 Starting live stream processing for session ${sessionId}`
-      );
-
       const processor = {
         sessionId,
         studentId,
@@ -571,10 +556,6 @@ class AWSVideoProcessor {
       processor.frameCount++;
       processor.lastProcessed = new Date();
 
-      console.log(
-        `🎬 Processing live frame ${processor.frameCount} for session ${sessionId}`
-      );
-
       // Parallel AWS analysis
       const [faceAnalysis, labelAnalysis] = await Promise.all([
         this.analyzeFrameForFaces(frameBuffer),
@@ -590,7 +571,6 @@ class AWSVideoProcessor {
 
       if (violations.length > 0) {
         processor.violationCount += violations.length;
-        console.log(`🚨 Live violations detected:`, violations);
       }
 
       // Store frame asynchronously (don't wait)

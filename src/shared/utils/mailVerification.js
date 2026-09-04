@@ -110,17 +110,7 @@ function sendVerificationEmail(
     html: html,
   };
   return transporter.sendMail(mailOptions, function (error, info) {
-    if (error) {
-      console.log({
-        status: true,
-        respMesg: error,
-      });
-    } else {
-      console.log({
-        status: true,
-        respMesg: "Email Sent Successfully",
-      });
-    }
+    if (error) {} else {}
   });
 }
 

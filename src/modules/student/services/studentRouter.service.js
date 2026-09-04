@@ -231,6 +231,16 @@ router.post(['/loginStudent', '/studentLogin'], async (req, res) => {
       tenantStudent = await student.findOne({ email });
     }
 
+    const updatedLoginCount = (globalUser.loginCount || 0) + 1;
+    await mainDBusers.updateOne({ _id: globalUser._id }, { $set: { loginCount: updatedLoginCount } });
+    if (tenantStudent && globalUser.orgId) {
+      const tenantDB = await getTenantDB(globalUser.orgId);
+      const { student } = connectTodb(tenantDB);
+      await student.updateOne({ email }, { $set: { loginCount: updatedLoginCount } });
+      tenantStudent.loginCount = updatedLoginCount;
+    }
+    globalUser.loginCount = updatedLoginCount;
+
     const token = jwt.sign(
       { userId: globalUser._id.toString(), email: globalUser.email, orgId: globalUser.orgId, role: 'STUDENT' },
       config.auth.jwtSecret

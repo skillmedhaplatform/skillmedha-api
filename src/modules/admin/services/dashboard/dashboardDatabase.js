@@ -17,10 +17,6 @@ const connectDB = async () => {
     kSquareDB = client.db(process.env.KSQUARE_DB_NAME || "KSquare");
     globalDB = client.db(process.env.GLOBAL_DB_NAME || "SkilmedhaDefault");
 
-    console.log("✅ MongoDB Connected Successfully");
-    console.log(`   - KSquare DB: ${kSquareDB.databaseName}`);
-    console.log(`   - Global DB: ${globalDB.databaseName}`);
-
     return { kSquareDB, globalDB };
   } catch (error) {
     console.error("❌ MongoDB Connection Error:", error.message);
@@ -54,7 +50,6 @@ const getOrgDB = (orgId) => {
 const closeDB = async () => {
   if (client) {
     await client.close();
-    console.log("MongoDB Connection Closed");
   }
 };
 const getResourcesDB = () => {

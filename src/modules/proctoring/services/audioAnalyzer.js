@@ -66,19 +66,10 @@ class AudioProctoringAnalyzer {
         `Missing required environment variables: ${missing.join(", ")}`
       );
     }
-
-
-    console.log("✅ Environment variables validated successfully");
   }
 
   async analyzeAudioBuffer(audioBuffer, sessionId, duration = 5000) {
     try {
-      console.log(`🎤 Starting audio buffer analysis for session ${sessionId}`);
-      console.log(
-        `📊 Input buffer type: ${typeof audioBuffer}, length: ${audioBuffer.length
-        }`
-      );
-
       // ✅ Enhanced validation with detailed logging
       const validationResult = await this.validateAudioBufferEnhanced(
         audioBuffer,
@@ -94,10 +85,6 @@ class AudioProctoringAnalyzer {
           validationResult.reason
         );
       }
-
-      console.log(
-        `✅ Audio buffer validated: ${validationResult.bufferSize} bytes`
-      );
 
       // ✅ Try to save and validate the temporary file
       const tempWebMPath = await this.saveTemporaryAudioBufferEnhanced(
@@ -124,12 +111,6 @@ class AudioProctoringAnalyzer {
         confidence: 0,
       };
 
-      // ✅ Skip FFmpeg conversion entirely and use acoustic analysis only
-      console.log(
-        "⏭️ Skipping FFmpeg conversion due to WebM compatibility issues"
-      );
-      console.log("🔊 Proceeding with acoustic analysis only");
-
       const acousticResult = await this.analyzeAcousticPatternsFromBuffer(
         audioBuffer
       );
@@ -151,9 +132,6 @@ class AudioProctoringAnalyzer {
       analysis.confidence = this.calculateConfidence(analysis.violations);
       this.cleanupTemporaryFile(tempWebMPath);
 
-      console.log(
-        `✅ Audio buffer analysis complete: ${analysis.violations.length} violations (acoustic only)`
-      );
       return analysis;
     } catch (error) {
       console.error("❌ Audio buffer analysis failed:", error);
@@ -174,7 +152,6 @@ class AudioProctoringAnalyzer {
       }
 
       const bufferSize = bufferData.length;
-      console.log(`🔍 Validating audio buffer: ${bufferSize} bytes`);
 
       if (bufferSize === 0) {
         return {
@@ -208,8 +185,6 @@ class AudioProctoringAnalyzer {
           break;
         }
       }
-
-      console.log(`🔍 Detected format: ${detectedFormat}`);
 
       // ✅ Check if it's mostly valid data (not all zeros or repeated patterns)
       const uniqueBytes = new Set(
@@ -252,7 +227,6 @@ class AudioProctoringAnalyzer {
       const tempDir = path.join(__dirname, "temp");
       if (!fs.existsSync(tempDir)) {
         fs.mkdirSync(tempDir, { recursive: true });
-        console.log(`📁 Created temp directory: ${tempDir}`);
       }
 
       const filename = `audio_buffer_${sessionId}_${Date.now()}.${format}`;
@@ -263,9 +237,6 @@ class AudioProctoringAnalyzer {
       if (typeof audioBuffer === "string") {
         try {
           bufferData = Buffer.from(audioBuffer, "base64");
-          console.log(
-            `🔄 Converted base64 string to buffer: ${bufferData.length} bytes`
-          );
         } catch (base64Error) {
           console.error("❌ Base64 decode error:", base64Error);
           return null;
@@ -287,9 +258,6 @@ class AudioProctoringAnalyzer {
       }
 
       const fileStats = fs.statSync(filepath);
-      console.log(
-        `💾 Saved ${format} audio buffer: ${filepath} (${fileStats.size} bytes)`
-      );
 
       if (fileStats.size === 0) {
         console.error("❌ File was created but is empty");
@@ -312,8 +280,6 @@ class AudioProctoringAnalyzer {
   // ✅ Enhanced acoustic analysis (no FFmpeg required)
   async analyzeAcousticPatternsFromBuffer(audioBuffer) {
     try {
-      console.log("🔊 Starting acoustic pattern analysis");
-
       const violations = [];
       const metrics = {
         volume: 0,
@@ -386,14 +352,6 @@ class AudioProctoringAnalyzer {
           confidence: 0.6,
         });
       }
-
-      console.log(`🔊 Acoustic analysis complete:`, {
-        bufferSize,
-        estimatedDuration: estimatedDuration.toFixed(2) + "s",
-        entropy: entropy.toFixed(3),
-        variance: variance.toFixed(3),
-        violations: violations.length,
-      });
 
       return { violations, metrics };
     } catch (error) {
@@ -498,7 +456,6 @@ class AudioProctoringAnalyzer {
     try {
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
-        console.log(`🗑️ Cleaned up temporary file: ${filePath}`);
       }
     } catch (error) {
       console.warn("⚠️ Failed to cleanup temporary file:", error.message);
@@ -508,8 +465,6 @@ class AudioProctoringAnalyzer {
   // Backward compatibility method
   async analyzeAudio(audioData, sessionId, studentUID) {
     try {
-      console.log(`🎤 Starting direct audio analysis for session ${sessionId}`);
-
       let audioBuffer = audioData;
       if (Buffer.isBuffer(audioData)) {
         audioBuffer = audioData.toString("base64");

@@ -54,8 +54,6 @@ class EnhancedRekognitionAnalyzer {
         );
       }
 
-      console.log("🔧 Configuring AWS SDK v3 (Rekognition) + Azure Blob...");
-
       this.rekognitionClient = new RekognitionClient({
         region: process.env.AWS_REGION,
         credentials: {
@@ -75,9 +73,6 @@ class EnhancedRekognitionAnalyzer {
 
       // Azure Blob client is managed by azureBlobService singleton
       this.containerName = process.env.AZURE_PROCTORING_CONTAINER_NAME || "proctoringrecordings";
-
-      console.log("✅ AWS Rekognition + Azure Blob configured successfully");
-      console.log(`📍 Region: ${process.env.AWS_REGION}`);
     } catch (error) {
       console.error("❌ AWS/Azure configuration failed:", error.message);
       throw error;
@@ -110,11 +105,7 @@ class EnhancedRekognitionAnalyzer {
         sessionId,
         config.studentId || "unknown"
       );
-      if (recordingResult.success) {
-        console.log(`✅ Video recording started for session ${sessionId}`);
-      }
-
-      console.log(`✅ Started randomized analysis for session ${sessionId}`);
+      if (recordingResult.success) {}
     } catch (error) {
       console.error("❌ Failed to start randomized analysis:", error);
       throw error;
@@ -123,14 +114,10 @@ class EnhancedRekognitionAnalyzer {
 
   scheduleNextAnalysis(sessionId, config) {
     if (!config.analysisInterval.enabled) {
-      console.log(`⏭️ Analysis interval disabled for session ${sessionId}`);
       return;
     }
 
     const nextInterval = this.configManager.generateRandomInterval(config);
-    console.log(
-      `⏰ Next analysis for session ${sessionId} in ${nextInterval} seconds`
-    );
 
     const timer = setTimeout(async () => {
       await this.performComprehensiveAnalysis(sessionId);
@@ -281,9 +268,6 @@ class EnhancedRekognitionAnalyzer {
         return null;
       }
 
-      console.log(
-        "📸 Requesting frame and audio capture from socket server..."
-      );
       const response = await axios.post(
         `${process.env.SOCKET_SERVER_URL}/request-frame-capture`,
         {
@@ -304,20 +288,12 @@ class EnhancedRekognitionAnalyzer {
         // Process video frame
         if (response.data.frameBuffer) {
           result.frameBuffer = Buffer.from(response.data.frameBuffer, "base64");
-          console.log(
-            "✅ Video frame captured, size:",
-            result.frameBuffer.length
-          );
         }
 
         // Process audio buffer
         if (response.data.audioBuffer) {
           result.audioBuffer = Buffer.from(response.data.audioBuffer, "base64");
           result.audioDuration = response.data.audioDuration || 5000;
-          console.log("✅ Audio buffer captured:", {
-            size: result.audioBuffer.length,
-            duration: result.audioDuration + "ms",
-          });
         }
 
         return result;
@@ -333,15 +309,10 @@ class EnhancedRekognitionAnalyzer {
   // Enhanced analysis with audio processing
   async performComprehensiveAnalysis(sessionId) {
     try {
-      console.log(
-        `🔍 Performing comprehensive analysis for session ${sessionId}`
-      );
-
       // Capture frame and audio
       const captureData = await this.captureFrameFromAgora(sessionId);
 
       if (!captureData) {
-        console.log("⚠️ No capture data available - skipping analysis");
         return;
       }
 
@@ -403,10 +374,6 @@ class EnhancedRekognitionAnalyzer {
   // New method to analyze audio buffer
   async analyzeAudioBuffer(sessionId, audioBuffer, duration) {
     try {
-      console.log(
-        `🎤 Analyzing ${duration}ms audio buffer for session ${sessionId}`
-      );
-
       // Use your audio analyzer
       const analysis =
         await this.audioAnalyzer.audioAnalyzer.analyzeAudioBuffer(
@@ -414,11 +381,6 @@ class EnhancedRekognitionAnalyzer {
           sessionId,
           duration
         );
-
-      console.log("🔊 Audio analysis complete:", {
-        violations: analysis.violations?.length || 0,
-        confidence: analysis.confidence,
-      });
 
       return analysis;
     } catch (error) {
@@ -445,11 +407,6 @@ class EnhancedRekognitionAnalyzer {
 
   async processAnalysisResults(sessionId, analysis) {
     if (analysis.overallViolations.length > 0) {
-      console.log(
-        `🚨 Violations detected for session ${sessionId}:`,
-        analysis.overallViolations
-      );
-
       await this.storeViolations(sessionId, analysis);
       await this.sendViolationToSocketServer(sessionId, analysis);
 
@@ -457,18 +414,11 @@ class EnhancedRekognitionAnalyzer {
       if (callback) {
         callback(analysis);
       }
-    } else {
-      console.log(
-        `✅ No violations found in analysis for session ${sessionId}`
-      );
-    }
+    } else {}
   }
 
   async storeViolations(sessionId, analysis) {
-    try {
-      console.log("💾 Storing violations for session:", sessionId);
-      // TODO: Implement database storage
-    } catch (error) {
+    try {} catch (error) {
       console.error("❌ Failed to store violations:", error);
     }
   }
@@ -490,15 +440,12 @@ class EnhancedRekognitionAnalyzer {
           timestamp: new Date(),
         }
       );
-      console.log("📡 Violation sent to socket server");
     } catch (error) {
       console.error("❌ Failed to send violation to socket server:", error);
     }
   }
 
   stopAnalysis(sessionId) {
-    console.log(`🛑 Stopping analysis for session ${sessionId}`);
-
     const timer = this.activeTimers.get(sessionId);
     if (timer) {
       clearTimeout(timer);
@@ -509,9 +456,7 @@ class EnhancedRekognitionAnalyzer {
     this.videoProcessor
       .endRecording(sessionId)
       .then((result) => {
-        if (result.success) {
-          console.log(`✅ Video recording ended for session ${sessionId}`);
-        }
+        if (result.success) {}
       })
       .catch((err) => console.error("Failed to end recording:", err));
 

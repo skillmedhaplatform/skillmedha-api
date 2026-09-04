@@ -12,22 +12,16 @@ class DashboardService {
   async getOrganizations() {
     try {
       const globalDB = getGlobalDB();
-      console.log("📊 Fetching organizations from globalDB...");
 
       const organizations = await globalDB
         .collection("organizations")
         .find({})
         .toArray();
-      console.log(`✅ Found ${organizations.length} organizations`);
 
       // Enhance with additional stats
       const enhancedOrgs = await Promise.all(
         organizations.map(async (org) => {
-          console.log(
-            `\n🔍 Processing: ${org.orgName} (${org.orgId}) - Type: ${org.type}`
-          );
           const stats = await this.getOrgStats(org.orgId, org.type);
-          console.log(`   Stats:`, stats);
 
           return {
             ...org,
@@ -36,7 +30,6 @@ class DashboardService {
         })
       );
 
-      console.log("\n✅ All organizations processed successfully\n");
       return enhancedOrgs;
     } catch (error) {
       console.error("❌ Error in getOrganizations:", error);
@@ -88,10 +81,6 @@ class DashboardService {
           stats.aiUsage.totalTokens += item.totalTokens;
           stats.aiUsage.totalRequests += item.requestCount;
         });
-
-        console.log(
-          ` AI Usage: ${stats.aiUsage.totalRequests} requests, ${stats.aiUsage.totalTokens} tokens`
-        );
       } catch (aiError) {
         console.warn(
           ` ⚠️ Could not fetch AI usage for ${orgId}:`,
@@ -139,10 +128,6 @@ class DashboardService {
           } catch (e) {
             // No jobs collection
           }
-
-          console.log(
-            `   ✓ College stats: TPOs=${tpoCount}, Depts=${departmentCount}, Students=${studentCount}, Jobs=${stats.jobCount}, Courses=${courseCount}, Internships=${internshipCount}`
-          );
         } catch (orgDbError) {
           console.warn(
             `   ⚠️ Could not fetch college stats for ${orgId}:`,
@@ -191,10 +176,6 @@ class DashboardService {
               hrError.message
             );
           }
-
-          console.log(
-            `   ✓ Company stats: Jobs=${stats.jobCount}, HRs=${stats.hrCount}`
-          );
         } catch (companyError) {
           console.warn(
             `   ⚠️ Could not fetch company stats for ${orgId}:`,
@@ -221,16 +202,12 @@ class DashboardService {
   // ==================== GET ORGANIZATION BY ID ====================
   async getOrganizationById(orgId) {
     try {
-      console.log(`\n🔍 Fetching organization: ${orgId}`);
-
       const globalDB = getGlobalDB();
       const org = await globalDB.collection("organizations").findOne({ orgId });
 
       if (!org) {
         throw new Error("Organization not found");
       }
-
-      console.log(`✅ Found: ${org.orgName} (${org.type})`);
 
       const stats = await this.getOrgStats(org.orgId, org.type);
 
@@ -247,20 +224,15 @@ class DashboardService {
   // ==================== GET DEPARTMENTS BY ORG ====================
   async getDepartmentsByOrg(orgId) {
     try {
-      console.log(`\n🔍 Fetching departments for: ${orgId}`);
-
       const orgDB = getOrgDB(orgId);
       const departments = await orgDB
         .collection("department")
         .find({})
         .toArray();
 
-      console.log(`✅ Found ${departments.length} departments`);
-
       // Count students in each department
       const departmentsWithStats = departments.map((dept) => {
         const studentCount = dept.students ? dept.students.length : 0;
-        console.log(`   - ${dept.title}: ${studentCount} students`);
 
         return {
           ...dept,
@@ -284,11 +256,6 @@ class DashboardService {
     search = ""
   ) {
     try {
-      console.log(
-        `\n🔍 Fetching students for dept: ${departmentId} in org: ${orgId}`
-      );
-      console.log(`   Page: ${page}, Limit: ${limit}, Search: "${search}"`);
-
       const orgDB = getOrgDB(orgId);
       const skip = (page - 1) * limit;
 
@@ -307,8 +274,6 @@ class DashboardService {
       if (!department) {
         throw new Error("Department not found");
       }
-
-      console.log(`✅ Found department: ${department.title}`);
 
       // Build query for students
       let query = {};
@@ -336,8 +301,6 @@ class DashboardService {
         ];
       }
 
-      console.log(`   Query:`, JSON.stringify(query, null, 2));
-
       // Get students with pagination
       const students = await orgDB
         .collection("student")
@@ -349,10 +312,6 @@ class DashboardService {
       const totalCount = await orgDB
         .collection("student")
         .countDocuments(query);
-
-      console.log(
-        `✅ Found ${students.length} students (total: ${totalCount})`
-      );
 
       const enhancedStudents = await Promise.all(
         students.map(async (student) => {
@@ -597,8 +556,6 @@ class DashboardService {
   // ==================== GET GROWTH STATS ====================
   async getGrowthStats(period = "6months") {
     try {
-      console.log(`\n📈 Fetching growth stats for period: ${period}`);
-
       const globalDB = getGlobalDB();
       const kSquareDB = getKSquareDB();
 
@@ -608,31 +565,14 @@ class DashboardService {
       const startDate = new Date(now);
       startDate.setMonth(startDate.getMonth() - months);
 
-      console.log(
-        `   Date range: ${startDate.toISOString()} to ${now.toISOString()}`
-      );
-      console.log(
-        `   Timestamp range: ${startDate.getTime()} to ${now.getTime()}`
-      );
-
       // Get all organizations
       const allOrganizations = await globalDB
         .collection("organizations")
         .find({})
         .toArray();
 
-      // Check job structure
-      console.log("\n🔍 Checking job document structure...");
       const sampleJob = await kSquareDB.collection("job").findOne({});
-      if (sampleJob) {
-        console.log(
-          "Sample job createdAt:",
-          sampleJob.createdAt,
-          "Type:",
-          typeof sampleJob.createdAt
-        );
-        console.log("Sample job startDate:", sampleJob.startDate);
-      }
+      if (sampleJob) {}
 
       // Generate monthly data points
       const dataPoints = [];
@@ -641,10 +581,6 @@ class DashboardService {
         const pointDate = new Date(startDate);
         pointDate.setMonth(pointDate.getMonth() + i);
         const pointTimestamp = pointDate.getTime();
-
-        console.log(
-          `\n📅 Processing: ${pointDate.toLocaleDateString()} (${pointTimestamp})`
-        );
 
         let studentsCount = 0;
         let jobsCount = 0;
@@ -758,11 +694,7 @@ class DashboardService {
                     ],
                   });
                 jobsCount += jobsInCompanyDB;
-                if (jobsInCompanyDB > 0) {
-                  console.log(
-                    `   Company ${org.orgName}: ${jobsInCompanyDB} jobs`
-                  );
-                }
+                if (jobsInCompanyDB > 0) {}
               } catch (e) {
                 // No jobs
               }
@@ -789,9 +721,6 @@ class DashboardService {
               ],
             });
 
-          console.log(
-            `   ✓ KSquare jobs at ${pointDate.toLocaleDateString()}: ${jobsInKSquare}`
-          );
           jobsCount += jobsInKSquare;
 
           // Debug: Show total jobs in KSquare for reference
@@ -799,9 +728,6 @@ class DashboardService {
             const totalJobsInKSquare = await kSquareDB
               .collection("job")
               .countDocuments();
-            console.log(
-              `   📊 Total jobs in KSquare DB: ${totalJobsInKSquare}`
-            );
           }
         } catch (e) {
           console.warn(`   ⚠️ Error counting KSquare jobs:`, e.message);
@@ -818,13 +744,7 @@ class DashboardService {
           courses: coursesCount,
           internships: internshipsCount,
         });
-
-        console.log(
-          `   ✅ Totals: Students=${studentsCount}, Jobs=${jobsCount}, Courses=${coursesCount}, Internships=${internshipsCount}`
-        );
       }
-
-      console.log(`\n✅ Generated ${dataPoints.length} data points\n`);
 
       return {
         period,
@@ -889,7 +809,6 @@ class DashboardService {
   }
   async getAiUsageGrowth(period = "6months") {
     try {
-      console.log(`\n🤖 Fetching AI usage growth for period: ${period}`);
       const resourcesDB = getResourcesDB();
 
       // Calculate date range
@@ -897,10 +816,6 @@ class DashboardService {
       const months = period === "6months" ? 6 : period === "1year" ? 12 : 3;
       const startDate = new Date(now);
       startDate.setMonth(startDate.getMonth() - months);
-
-      console.log(
-        ` Date range: ${startDate.toISOString()} to ${now.toISOString()}`
-      );
 
       // Generate monthly data points
       const dataPoints = [];
@@ -911,8 +826,6 @@ class DashboardService {
 
         const nextPointDate = new Date(pointDate);
         nextPointDate.setMonth(nextPointDate.getMonth() + 1);
-
-        console.log(`\n📅 Processing: ${pointDate.toLocaleDateString()}`);
 
         // Get AI usage for this month
         const monthlyStats = await resourcesDB
@@ -965,16 +878,10 @@ class DashboardService {
           totalRequests: monthTotalRequests,
           byType,
         });
-
-        console.log(
-          ` ✅ Month Totals: Tokens=${monthTotalTokens}, Requests=${monthTotalRequests}`
-        );
       }
 
       // Calculate change rates
       const changeRates = this.calculateChangeRates(dataPoints);
-
-      console.log(`\n✅ Generated ${dataPoints.length} AI usage data points\n`);
 
       return {
         period,
@@ -1046,13 +953,10 @@ class DashboardService {
   // ==================== GET COURSE ANALYTICS ====================
   async getCourseAnalytics() {
     try {
-      console.log("\n📊 ========== FETCHING COURSE ANALYTICS ==========");
       const globalDB = getGlobalDB();
       const kSquareDB = getKSquareDB(); // NEW: Get KSquareDB connection
       const paymentCollection = globalDB.collection("payment");
 
-      // 1. Fetch Course Metadata (Names) from KSquareDB
-      console.log("   🔍 Fetching course metadata...");
       const courses = await kSquareDB
         .collection("internships")
         .find({ type: "course" })
@@ -1063,7 +967,6 @@ class DashboardService {
       courses.forEach(c => {
         courseNameMap[c._id.toString()] = c.title;
       });
-      console.log(`   ✅ Found ${courses.length} course definitions`);
 
       // 2. Initial stats from payments (Direct Enrollments)
       const paymentStats = await paymentCollection
@@ -1095,15 +998,11 @@ class DashboardService {
         }
       });
 
-      console.log(`   Direct Enrollments (Payment): ${paymentStats.reduce((acc, c) => acc + c.enrollmentCount, 0)}`);
-
       // 3. Fetch from College Assigned Courses
       const colleges = await globalDB
         .collection("organizations")
         .find({ type: "college" })
         .toArray();
-
-      console.log(`   Fetching assigned courses from ${colleges.length} colleges...`);
 
       for (const college of colleges) {
         try {
@@ -1177,12 +1076,9 @@ class DashboardService {
 
       // 5. Separate Most and Least Popular
       const mostPopular = allCourses.slice(0, 5);
-      
+
       // Least Popular: Just sort ascending and take top 5 (allow overlap)
       const leastPopular = [...allCourses].sort((a, b) => a.enrollmentCount - b.enrollmentCount).slice(0, 5);
-
-      console.log(`   Total Combined Enrollments: ${totalEnrollments}`);
-      console.log(`   Unique Courses: ${allCourses.length}`);
 
       return {
         totalEnrollments,
@@ -1199,7 +1095,6 @@ class DashboardService {
   // ==================== GET JOB ACTIVITY ====================
   async getJobActivity() {
     try {
-      console.log("\n📊 ========== FETCHING JOB ACTIVITY ==========");
       const kSquareDB = getKSquareDB();
       const studentsCollection = kSquareDB.collection("student");
 
@@ -1252,9 +1147,6 @@ class DashboardService {
         ? (result.totalApplications / result.totalStudents).toFixed(2) 
         : 0;
 
-      console.log(`   Total Applications: ${result.totalApplications}`);
-      console.log(`   Avg App/Student: ${avgApplications}`);
-
       return {
         applications: result.totalApplications,
         placements: result.totalPlaced,
@@ -1269,9 +1161,8 @@ class DashboardService {
   // ==================== GET PLACEMENT ANALYTICS ====================
   async getPlacementAnalytics() {
      try {
-      console.log("\n📊 ========== FETCHING PLACEMENT ANALYTICS ==========");
-      const kSquareDB = getKSquareDB();
-      const studentsCollection = kSquareDB.collection("student");
+       const kSquareDB = getKSquareDB();
+       const studentsCollection = kSquareDB.collection("student");
 
        const stats = await studentsCollection
         .aggregate([
@@ -1309,20 +1200,17 @@ class DashboardService {
         ])
         .toArray();
 
-      const result = stats[0] || { totalStudents: 0, studentsPlaced: 0 };
-      const placementRate = result.totalStudents > 0
-        ? ((result.studentsPlaced / result.totalStudents) * 100).toFixed(2) + "%"
-        : "0%";
+       const result = stats[0] || { totalStudents: 0, studentsPlaced: 0 };
+       const placementRate = result.totalStudents > 0
+         ? ((result.studentsPlaced / result.totalStudents) * 100).toFixed(2) + "%"
+         : "0%";
 
-      console.log(`   Students Placed: ${result.studentsPlaced}`);
-      console.log(`   Placement Rate: ${placementRate}`);
-
-      return {
-        studentsPlaced: result.studentsPlaced,
-        placementRate,
-        totalStudents: result.totalStudents
-      };
-    } catch (error) {
+       return {
+         studentsPlaced: result.studentsPlaced,
+         placementRate,
+         totalStudents: result.totalStudents
+       };
+     } catch (error) {
        console.error("❌ Error fetching placement analytics:", error);
        throw new Error(`Error fetching placement analytics: ${error.message}`);
     }
@@ -1331,7 +1219,6 @@ class DashboardService {
   // ==================== GET REVENUE ANALYTICS ====================
   async getRevenueAnalytics() {
     try {
-      console.log("\n📊 ========== FETCHING REVENUE ANALYTICS ==========");
       const globalDB = getGlobalDB();
       const paymentCollection = globalDB.collection("payment");
 
@@ -1353,7 +1240,7 @@ class DashboardService {
         .toArray();
 
       const result = stats[0] || { totalRevenue: 0 };
-      
+
       const revenueByCourse = await paymentCollection.aggregate([
          {
             $group: {
@@ -1364,8 +1251,6 @@ class DashboardService {
          },
          { $sort: { revenue: -1 } }
       ]).toArray();
-
-      console.log(`   Total Revenue: ${result.totalRevenue}`);
 
       return {
         totalRevenue: result.totalRevenue,

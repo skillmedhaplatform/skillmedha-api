@@ -238,12 +238,7 @@ class GazeTrackingAnalyzer {
       const command = new DetectFacesCommand(params);
       const result = await this.rekognition.send(command);
 
-      if (this.gazeConfig.debugMode) {
-        console.log(
-          "🔍 Raw Rekognition face data:",
-          JSON.stringify(result.FaceDetails, null, 2)
-        );
-      }
+      if (this.gazeConfig.debugMode) {}
 
       return this.processGazeResults(result, sessionId, studentId);
     } catch (error) {
@@ -290,14 +285,7 @@ class GazeTrackingAnalyzer {
     // Process the primary face (largest/most confident)
     const primaryFace = this.selectPrimaryFace(faces);
 
-    if (this.gazeConfig.debugMode) {
-      console.log("🔍 Primary face data:", {
-        eyeDirection: primaryFace.EyeDirection,
-        pose: primaryFace.Pose,
-        eyesOpen: primaryFace.EyesOpen,
-        confidence: primaryFace.Confidence,
-      });
-    }
+    if (this.gazeConfig.debugMode) {}
 
     const gazeInfo = this.extractGazeInfo(primaryFace, 0);
 
@@ -354,17 +342,9 @@ class GazeTrackingAnalyzer {
       pitch = pose.Pitch;
       confidence = Math.min(70, face.Confidence); // Lower confidence for fallback
 
-      if (this.gazeConfig.debugMode) {
-        console.log("⚠️ Using head pose as gaze fallback:", {
-          yaw,
-          pitch,
-          confidence,
-        });
-      }
+      if (this.gazeConfig.debugMode) {}
     } else {
-      if (this.gazeConfig.debugMode) {
-        console.log("❌ No reliable gaze data available");
-      }
+      if (this.gazeConfig.debugMode) {}
       return null;
     }
 
@@ -452,13 +432,7 @@ class GazeTrackingAnalyzer {
     const { yaw, pitch, confidence, eyesOpen } = gazeInfo;
     const cfg = this.gazeConfig;
 
-    if (this.gazeConfig.debugMode) {
-      console.log("🔍 Checking violations:", {
-        yaw: yaw.toFixed(1),
-        pitch: pitch.toFixed(1),
-        confidence: confidence.toFixed(1),
-      });
-    }
+    if (this.gazeConfig.debugMode) {}
 
     // ✅ ENHANCED: More sensitive horizontal gaze violations
     if (cfg.alerts.lookingAway && Math.abs(yaw) > cfg.suspiciousYaw) {
@@ -560,7 +534,6 @@ class GazeTrackingAnalyzer {
       message: `Multiple gaze violations detected for session ${sessionId}`,
     };
 
-    console.log("🚨 GAZE ALERT:", alert);
     return alert;
   }
 
@@ -590,7 +563,6 @@ class GazeTrackingAnalyzer {
 
   updateConfig(newConfig) {
     this.gazeConfig = { ...this.gazeConfig, ...newConfig };
-    console.log("✅ Gaze config updated:", this.gazeConfig);
   }
 
   // ✅ NEW: Enable/disable debug mode

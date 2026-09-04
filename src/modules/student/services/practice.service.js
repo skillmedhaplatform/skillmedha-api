@@ -127,7 +127,6 @@ const findInAllTenants = async (
     // Return a default value for unsupported methods
     return method === "find" ? [] : null;
   } catch (error) {
-    console.log("Error in findInAllTenants:", error);
     throw error;
   }
 };
@@ -290,7 +289,23 @@ module.exports.getTopicsBySubject = async (req, res) => {
     const { subjectId } = req.params;
     const query = { subjectId: new ObjectId(subjectId) };
     const data = await findInAllTenants("topics", query, "find");
-    res.status(200).json({ data });
+
+    // Get number of questions for each topic
+    const topicsWithQuestionCount = await Promise.all(
+      data.map(async (topic) => {
+        const questionCount = await findInAllTenants(
+          "questions",
+          { topicId: topic._id },
+          "countDocuments"
+        );
+        return {
+          ...topic,
+          totalQuestions: questionCount,
+        };
+      })
+    );
+
+    res.status(200).json({ data: topicsWithQuestionCount });
   } catch (error) {
     res.status(500).json({ err: error.message });
   }
@@ -766,7 +781,6 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
     if (req.file && req.file.path) {
       try {
         await fs.unlink(req.file.path);
-        console.log(`✅ Deleted temporary file: ${req.file.path}`);
       } catch (unlinkError) {
         console.error(`❌ Error deleting file: ${unlinkError.message}`);
       }
@@ -1024,7 +1038,7 @@ module.exports.startPractice = async (req, res) => {
     });
 
     await student.updateOne(
-      { _id: new ObjectId(userId) },
+      { globalId: userId },
       {
         $addToSet: {
           practiceSessions: pracData?.insertedId?.toString(),
@@ -1077,9 +1091,7 @@ module.exports.getStudentPracResults = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    const covId = new ObjectId(userId);
-
-    const findStudent = await student.findOne({ _id: covId });
+    const findStudent = await student.findOne({ globalId: userId });
 
     if (!findStudent) throw new Error("Results Not Found");
 
@@ -1104,14 +1116,13 @@ module.exports.saveTopMockScore = async (req, res) => {
       return res.status(400).json({ err: "testId and attempt are required" });
     }
 
-    const covId = new ObjectId(userId);
-    const findStudent = await student.findOne({ _id: covId });
+    const findStudent = await student.findOne({ globalId: userId });
     if (!findStudent) throw new Error("Student Not Found");
 
     // Prepare attempt document
     const attemptDoc = {
       ...attempt,
-      userId: covId,
+      userId: findStudent._id,
       testId: testId,
       createdAt: new Date()
     };
@@ -1121,7 +1132,7 @@ module.exports.saveTopMockScore = async (req, res) => {
 
     // Fetch all attempts for this user and test
     const allAttempts = await mockTestAttempts
-      .find({ userId: covId, testId: testId })
+      .find({ userId: findStudent._id, testId: testId })
       .sort({ score: -1, timestamp: -1 }) // Top score first, then most recent
       .toArray();
 
@@ -1137,13 +1148,12 @@ module.exports.getTopMockScores = async (req, res) => {
     const { testId } = req.params;
     const userId = req.userID;
 
-    const covId = new ObjectId(userId);
-    const findStudent = await student.findOne({ _id: covId });
+    const findStudent = await student.findOne({ globalId: userId });
     if (!findStudent) throw new Error("Student Not Found");
 
     // Fetch all attempts for this user and test
     const allAttempts = await mockTestAttempts
-      .find({ userId: covId, testId: testId })
+      .find({ userId: findStudent._id, testId: testId })
       .sort({ score: -1, timestamp: -1 })
       .toArray();
 

@@ -15,6 +15,7 @@ var DetectModerationLabelsCommand =
 
 // ✅ LiveRekognitionProcessor Class - PROCTORING OPTIMIZED
 function LiveRekognitionProcessor(config) {
+  console.log("✅ LiveRekognitionProcessor initialized for proctoring (frame-based analysis)");
   config = config || {};
 
   this.config = {
@@ -40,10 +41,6 @@ LiveRekognitionProcessor.prototype.initializeClients = function () {
   };
 
   this.rekognitionClient = new RekognitionClient(clientConfig);
-
-  console.log(
-    "✅ LiveRekognitionProcessor initialized for proctoring (frame-based analysis)"
-  );
 };
 
 // ✅ 1. START PROCTORING FOR A SESSION
@@ -56,8 +53,6 @@ LiveRekognitionProcessor.prototype.startLiveProcessing = function (
 
   return new Promise(function (resolve, reject) {
     try {
-      console.log("🎯 Starting proctoring analysis for session: " + sessionId);
-
       // Store session configuration
       var sessionConfig = {
         sessionId: sessionId,
@@ -94,8 +89,6 @@ LiveRekognitionProcessor.prototype.startLiveProcessing = function (
 
       self.activeSessions.set(sessionId, sessionConfig);
 
-      console.log("✅ Proctoring analysis ready for session: " + sessionId);
-
       resolve({
         success: true,
         sessionId: sessionId,
@@ -120,8 +113,6 @@ LiveRekognitionProcessor.prototype.stopLiveProcessing = function (sessionId) {
 
   return new Promise(function (resolve, reject) {
     try {
-      console.log("🛑 Stopping proctoring for session: " + sessionId);
-
       // Clear any analysis intervals
       var interval = self.analysisIntervals.get(sessionId);
       if (interval) {
@@ -133,7 +124,6 @@ LiveRekognitionProcessor.prototype.stopLiveProcessing = function (sessionId) {
       self.activeSessions.delete(sessionId);
       self.violationCallbacks.delete(sessionId);
 
-      console.log("✅ Proctoring stopped for session: " + sessionId);
       resolve({ success: true, sessionId: sessionId });
     } catch (error) {
       console.error(
@@ -156,8 +146,6 @@ LiveRekognitionProcessor.prototype.analyzeFrame = function (
   return new Promise(function (resolve, reject) {
     (async function () {
       try {
-        console.log("🔍 Analyzing frame for session: " + sessionId);
-
         var session = self.activeSessions.get(sessionId);
         if (!session) {
           throw new Error(
@@ -229,7 +217,6 @@ LiveRekognitionProcessor.prototype.setViolationCallback = function (
   callback
 ) {
   this.violationCallbacks.set(sessionId, callback);
-  console.log("📞 Violation callback set for session: " + sessionId);
 };
 
 // ✅ 5. GET SESSION STATUS
@@ -281,13 +268,6 @@ LiveRekognitionProcessor.prototype.startContinuousAnalysis = function (
 
       self.analysisIntervals.set(sessionId, interval);
 
-      console.log(
-        "🔄 Continuous analysis started for session: " +
-          sessionId +
-          " (every " +
-          intervalMs +
-          "ms)"
-      );
       resolve({
         success: true,
         sessionId: sessionId,
@@ -612,18 +592,7 @@ LiveRekognitionProcessor.prototype.handleViolations = function (
 
         // Enhanced logging with violation details
         if (violations.length > 0) {
-          console.log(
-            "🚨 " +
-              violations.length +
-              " violations detected for session " +
-              sessionId +
-              ":"
-          );
-          violations.forEach(function (v, index) {
-            console.log(
-              "  " + (index + 1) + ". [" + v.severity + "] " + v.message
-            );
-          });
+          violations.forEach(function (v, index) {});
         }
 
         resolve();
@@ -662,12 +631,9 @@ LiveRekognitionProcessor.prototype.cleanup = function () {
 
   return new Promise(function (resolve, reject) {
     try {
-      console.log("🧹 Cleaning up LiveRekognitionProcessor...");
-
       // Clear all analysis intervals
       self.analysisIntervals.forEach(function (interval, sessionId) {
         clearInterval(interval);
-        console.log("🛑 Stopped analysis interval for session: " + sessionId);
       });
 
       // Clear all data
@@ -675,7 +641,6 @@ LiveRekognitionProcessor.prototype.cleanup = function () {
       self.violationCallbacks.clear();
       self.analysisIntervals.clear();
 
-      console.log("✅ Cleanup completed");
       resolve();
     } catch (error) {
       reject(error);

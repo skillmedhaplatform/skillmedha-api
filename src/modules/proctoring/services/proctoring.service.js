@@ -54,9 +54,7 @@ const convertbase64ToBlob = (file, name) => {
     "./uploads/" + name,
     base64ImageNew,
     { encoding: "base64" },
-    function (err) {
-      console.log("File created");
-    }
+    function (err) {}
   );
   const fileContentNew = fs.readFileSync("./uploads/" + name);
   return fileContentNew;

@@ -47,7 +47,6 @@ class ProctoringConfiguration {
   generateRandomInterval(config) {
     const { min, max } = config.analysisInterval;
     const interval = Math.floor(Math.random() * (max - min + 1)) + min;
-    console.log(`⏰ Generated interval: ${interval} seconds`);
     return interval;
   }
 
