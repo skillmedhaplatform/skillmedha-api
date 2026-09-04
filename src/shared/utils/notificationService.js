@@ -58,7 +58,6 @@ async function getTargetStudentIds(tenantDB, accessCriteria) {
         };
         break;
       default:
-        console.log("⚠️ Unknown access type:", accessCriteria.type);
         return [];
     }
 
@@ -77,10 +76,6 @@ async function getTargetStudentIds(tenantDB, accessCriteria) {
       return String(s.globalId);
     });
 
-    console.log(
-      `✅ Found ${studentIds.length} students for ${accessCriteria.type} access`
-    );
-
     return studentIds;
   } catch (error) {
     console.error("❌ Error fetching target students:", error);
@@ -90,7 +85,6 @@ async function getTargetStudentIds(tenantDB, accessCriteria) {
 
 async function sendNotificationToStudents(tenantId, studentIds, message) {
   if (!studentIds || studentIds.length === 0) {
-    console.log("⚠️ No students to notify");
     return { success: 0, failed: 0 };
   }
 
@@ -134,10 +128,6 @@ async function sendNotificationToStudents(tenantId, studentIds, message) {
 
       await Promise.allSettled(promises);
     }
-
-    console.log(
-      `✅ Notifications sent: ${successCount} successful, ${failedCount} failed`
-    );
 
     return {
       success: successCount,
@@ -236,14 +226,9 @@ async function notifyTestAssignment(
   accessCriteria
 ) {
   try {
-    console.log(
-      `📢 Processing test assignment notification for: ${testData.title}`
-    );
-
     const studentIds = await getTargetStudentIds(tenantDB, accessCriteria);
 
     if (studentIds.length === 0) {
-      console.log("⚠️ No eligible students found for this test");
       return { success: false, message: "No eligible students" };
     }
 
@@ -268,14 +253,9 @@ async function notifyTestAssignment(
 
 async function notifyJobPosting(tenantId, tenantDB, jobData, accessCriteria) {
   try {
-    console.log(
-      `📢 Processing job posting notification for: ${jobData?.title || ""}`
-    );
-
     const studentIds = await getTargetStudentIds(tenantDB, accessCriteria);
 
     if (studentIds.length === 0) {
-      console.log("⚠️ No eligible students found for this job");
       return { success: false, message: "No eligible students" };
     }
 
@@ -300,14 +280,9 @@ async function notifyJobPosting(tenantId, tenantDB, jobData, accessCriteria) {
 
 async function notifyJobUpdate(tenantId, tenantDB, jobData, accessCriteria) {
   try {
-    console.log(
-      `📢 Processing job update notification for: ${jobData?.title || ""}`
-    );
-
     const studentIds = await getTargetStudentIds(tenantDB, accessCriteria);
 
     if (studentIds.length === 0) {
-      console.log("⚠️ No eligible students found for this job");
       return { success: false, message: "No eligible students" };
     }
 

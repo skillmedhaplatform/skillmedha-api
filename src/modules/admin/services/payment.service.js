@@ -161,17 +161,7 @@ router.post("/createOrder", async (req, res) => {
         };
 
         transporters.sendMail(mailOptions, function (error, info) {
-          if (error) {
-            console.log({
-              status: true,
-              respMesg: error,
-            });
-          } else {
-            console.log({
-              status: true,
-              respMesg: "Email Sent Successfully",
-            });
-          }
+          if (error) {} else {}
         });
 
         res.status(200).json(order); // ✅ FIXED
@@ -332,17 +322,7 @@ router.post("/payment_links", async (req, res) => {
           };
 
           transporters.sendMail(mailOptions, function (error, info) {
-            if (error) {
-              console.log({
-                status: true,
-                respMesg: error,
-              });
-            } else {
-              console.log({
-                status: true,
-                respMesg: "Email Sent Successfully",
-              });
-            }
+            if (error) {} else {}
           });
         });
     } else {
@@ -350,9 +330,7 @@ router.post("/payment_links", async (req, res) => {
     }
     //  console.log(data)
     res.send("success");
-  } catch (error) {
-    console.log(error.message);
-  }
+  } catch (error) {}
 });
 
 router.post("/webhook", async (req, res) => {
@@ -410,7 +388,6 @@ router.post("/webhook", async (req, res) => {
       res.status(200).send({ data: "Success" });
     }
   } catch (error) {
-    console.log(error);
     res.status(200).send({ data: "Success" });
   }
 });
@@ -559,17 +536,7 @@ router.post("/getPayment", async (req, res) => {
 
         // Send success email
         transporters.sendMail(sucessMail(data), function (error, info) {
-          if (error) {
-            console.log({
-              status: false,
-              respMesg: error,
-            });
-          } else {
-            console.log({
-              status: true,
-              respMesg: "Email Sent Successfully",
-            });
-          }
+          if (error) {} else {}
         });
 
         return res.status(200).json({
@@ -583,17 +550,7 @@ router.post("/getPayment", async (req, res) => {
       var mailOptions = failMailTemplate(data);
 
       transporters.sendMail(mailOptions, function (error, info) {
-        if (error) {
-          console.log({
-            status: false,
-            respMesg: error,
-          });
-        } else {
-          console.log({
-            status: true,
-            respMesg: "Failed payment email sent",
-          });
-        }
+        if (error) {} else {}
       });
 
       return res.status(400).json({
@@ -852,11 +809,7 @@ router.post("/cart/verify", mandatory, selectTenantDB, async (req, res) => {
         notes: { name: `${student.firstName || ""} ${student.lastName || ""}`.trim() },
       }),
       (error, info) => {
-        if (error) {
-          console.log({ status: false, respMesg: error });
-        } else {
-          console.log({ status: true, respMesg: "Email Sent Successfully" });
-        }
+        if (error) {} else {}
       }
     );
 

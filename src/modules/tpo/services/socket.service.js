@@ -433,9 +433,7 @@ io.on("connection", (socket) => {
               data.response[e._id].status = "incorrect";
             }
           }
-        } else {
-          console.log(123);
-        }
+        } else {}
       });
 
       data.scoreData = {};
@@ -534,20 +532,17 @@ io.on("connection", (socket) => {
           },
         };
 
-     
+
 
         progData = await progress.insertOne(progressDoc);
         if (!progData?.insertedId) {
           throw new Error("Progress insert failed to return insertedId");
         }
 
-        console.log("✅ Progress saved to DB with ID:", progData.insertedId.toString());
-
         await student.updateOne(
           { _id: findStudent._id },
           { $push: { progress: progData.insertedId.toString() } },
         );
-        console.log("✅ Student progress array updated for:", findStudent._id.toString());
       } catch (error) {
         console.error("❌ Failed to save progress to DB:", error);
       }
@@ -1186,9 +1181,7 @@ io.on("connection", (socket) => {
             },
           );
         }
-      } catch (error) {
-        console.log({ err: error.message });
-      }
+      } catch (error) {}
 
       io.to(socket.id)
         .to(findUser.ConnectedSocketId)
@@ -1209,8 +1202,6 @@ io.on("connection", (socket) => {
   });
   socket.on("joinProctoringSession", async (data) => {
     try {
-      console.log("=== PROCTORING SESSION JOIN REQUEST ===");
-      console.log("Request data:", data);
       // console.log("Socket info:", {
       //   id: socket.id,
       //   userID: socket.userID,
@@ -1221,21 +1212,13 @@ io.on("connection", (socket) => {
       const { sessionId, userType } = data;
 
       if (!sessionId || !userType) {
-        console.log("❌ Missing required data:", {
-          sessionId: !!sessionId,
-          userType: !!userType,
-        });
         socket.emit("error", { message: "sessionId and userType required" });
         return;
       }
 
       const roomId = `proctoring_session_${sessionId}`;
 
-      console.log("Attempting to join room:", roomId);
       socket.join(roomId);
-
-      console.log("Room joined successfully. Current rooms:", socket.rooms);
-      console.log("✅ User joined proctoring room:", roomId);
 
       socket.emit("proctoringRoomJoined", {
         sessionId,
@@ -1243,8 +1226,6 @@ io.on("connection", (socket) => {
         message: "Successfully joined proctoring session",
         timestamp: new Date(),
       });
-
-      console.log("=== PROCTORING SESSION JOIN COMPLETE ===");
     } catch (error) {
       console.error("=== PROCTORING SESSION JOIN ERROR ===");
       console.error("Error details:", {
@@ -1266,10 +1247,6 @@ io.on("connection", (socket) => {
       // Leave the proctoring room
       socket.leave(roomId);
 
-      console.log(
-        `User ${socket.userID} (${userType}) left proctoring room: ${roomId}`,
-      );
-
       // Notify others in the room
       socket.to(roomId).emit("userLeftProctoring", {
         userId: socket.userID,
@@ -1289,15 +1266,7 @@ io.on("connection", (socket) => {
     try {
       const { sessionId, message, targetStudentId } = data;
 
-      console.log("=== SEND PROCTOR MESSAGE DEBUG ===");
-      console.log("Data received:", data);
-      console.log("Sender socket ID:", socket.id);
-      console.log("Sender user ID:", socket.userID);
-
       if (targetStudentId) {
-        // Send to specific student
-        console.log("Sending to specific student:", targetStudentId);
-
         // Method 1: Find student by stored socket ID
         const { student } = connectTodb(socket.tenantDB);
         const targetStudent = await student.findOne({
@@ -1305,11 +1274,6 @@ io.on("connection", (socket) => {
         });
 
         if (targetStudent && targetStudent.ConnectedSocketId) {
-          console.log(
-            "Found student socket ID:",
-            targetStudent.ConnectedSocketId,
-          );
-
           // Send directly to student's socket
           io.to(targetStudent.ConnectedSocketId).emit("proctorMessage", {
             message,
@@ -1317,11 +1281,7 @@ io.on("connection", (socket) => {
             from: socket.userID,
             timestamp: new Date(),
           });
-
-          console.log("✅ Message sent to student socket");
         } else {
-          console.log("❌ Student socket not found");
-
           // Fallback: Send to room and let student filter by their ID
           const roomId = `proctoring_session_${sessionId}`;
           socket.to(roomId).emit("proctorMessage", {
@@ -1333,16 +1293,10 @@ io.on("connection", (socket) => {
           });
         }
       } else {
-        // Send to all students in the session
-        console.log("Sending to all students in session");
         const roomId = `proctoring_session_${sessionId}`;
 
         // Check room exists and has members
         const roomMembers = io.sockets.adapter.rooms.get(roomId);
-        console.log(
-          "Room members:",
-          roomMembers ? Array.from(roomMembers) : "No members",
-        );
 
         if (roomMembers && roomMembers.size > 0) {
           socket.to(roomId).emit("proctorMessage", {
@@ -1351,13 +1305,8 @@ io.on("connection", (socket) => {
             from: socket.userID,
             timestamp: new Date(),
           });
-          console.log("✅ Message sent to room");
-        } else {
-          console.log("❌ No members in room");
-        }
+        } else {}
       }
-
-      console.log("=== END SEND MESSAGE DEBUG ===");
     } catch (error) {
       console.error("sendProctorMessage error:", error);
       socket.emit("error", { message: "Failed to send proctor message" });
@@ -1434,26 +1383,14 @@ io.on("connection", (socket) => {
         hasAudio, // ✅ Add this
       } = data;
 
-      console.log("📸 Frame data received:", {
-        requestId,
-        hasFrameBuffer: !!frameBuffer,
-        frameBufferLength: frameBuffer ? frameBuffer.length : 0,
-        hasAudioBuffer: !!audioBuffer, // ✅ Add this
-        audioBufferLength: audioBuffer ? audioBuffer.length : 0, // ✅ Add this
-        audioDuration: audioDuration, // ✅ Add this
-        error: error || "none",
-      });
-
       const pendingRequest = pendingFrameRequests.get(requestId);
       if (pendingRequest) {
         clearTimeout(pendingRequest.timer);
         pendingFrameRequests.delete(requestId);
 
         if (error) {
-          console.log("⚠️ Frame capture error from client:", error);
           pendingRequest.resolve({ error, sessionId, timestamp });
         } else if (frameBuffer) {
-          console.log("✅ Frame and audio data resolved successfully");
           pendingRequest.resolve({
             frameBuffer,
             audioBuffer, // ✅ Include audio buffer
@@ -1464,16 +1401,13 @@ io.on("connection", (socket) => {
             requestId,
           });
         } else {
-          console.log("⚠️ No frame buffer in client response");
           pendingRequest.resolve({
             error: "No frame buffer",
             sessionId,
             timestamp,
           });
         }
-      } else {
-        console.log("⚠️ No pending request found for requestId:", requestId);
-      }
+      } else {}
     } catch (error) {
       console.error("❌ Frame data handling error:", error);
     }
@@ -1511,10 +1445,7 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("disconnect", () => {
-    console.log(`Client disconnected: ${socket.id}`);
-    // Optionally handle user disconnect logic here
-  });
+  socket.on("disconnect", () => {});
 
   socket.on("error", (error) => {
     console.error("Socket error:", error);
@@ -1647,11 +1578,6 @@ const pendingFrameRequests = new Map(); // requestId -> { resolve, reject, timer
 app.post("/request-frame-capture", async (req, res) => {
   try {
     const { sessionId, timestamp, includeAudio = true } = req.body; // ✅ Add includeAudio
-    console.log("📸 Frame capture request received:", {
-      sessionId,
-      timestamp,
-      includeAudio,
-    });
 
     if (!sessionId) {
       return res.status(400).json({
@@ -1665,16 +1591,11 @@ app.post("/request-frame-capture", async (req, res) => {
     // Check if room exists
     const roomMembers = io.sockets.adapter.rooms.get(roomId);
     if (!roomMembers || roomMembers.size === 0) {
-      console.log("⚠️ No members in proctoring room:", roomId);
       return res.status(404).json({
         success: false,
         error: "No active students in session",
       });
     }
-
-    console.log(
-      `📡 Requesting frame from ${roomMembers.size} members in room: ${roomId}`,
-    );
 
     // Generate unique request ID
     const requestId = `capture-${sessionId}-${Date.now()}-${Math.random()
@@ -1685,7 +1606,6 @@ app.post("/request-frame-capture", async (req, res) => {
     const framePromise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pendingFrameRequests.delete(requestId);
-        console.log("⏰ Frame capture timeout for request:", requestId);
         resolve(null);
       }, 12000); // ✅ Increased timeout for audio processing
 
@@ -1701,20 +1621,10 @@ app.post("/request-frame-capture", async (req, res) => {
       requester: "proctoring_server",
     });
 
-    console.log("📤 Frame capture request sent with ID:", requestId);
-
     // Wait for response
     const frameResponse = await framePromise;
 
     if (frameResponse) {
-      console.log("✅ Frame and audio received:", {
-        hasVideo: !!frameResponse.frameBuffer,
-        hasAudio: !!frameResponse.audioBuffer,
-        videoSize: frameResponse.frameBuffer?.length,
-        audioSize: frameResponse.audioBuffer?.length,
-        audioDuration: frameResponse.audioDuration,
-      });
-
       res.json({
         success: true,
         frameBuffer: frameResponse.frameBuffer,
@@ -1726,7 +1636,6 @@ app.post("/request-frame-capture", async (req, res) => {
         timestamp: frameResponse.timestamp,
       });
     } else {
-      console.log("⚠️ No frame response received");
       res.json({
         success: false,
         frameBuffer: null,
@@ -1749,12 +1658,10 @@ function waitForFrameResponse(sessionId, requestId, timeout = 8000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       pendingFrameRequests.delete(requestId);
-      console.log("⏰ Frame capture timeout for request:", requestId);
       resolve(null); // Don't reject, just return null
     }, timeout);
 
     pendingFrameRequests.set(requestId, { resolve, reject, timer });
-    console.log("⏳ Waiting for frame response, requestId:", requestId);
   });
 }
 
@@ -1762,10 +1669,6 @@ function waitForFrameResponse(sessionId, requestId, timeout = 8000) {
 app.post("/send-violation-alert", async (req, res) => {
   try {
     const { sessionId, violation, studentId, analysis, result } = req.body;
-
-    console.log(
-      `Sending violation alert for session ${sessionId}, student ${studentId}`,
-    );
 
     // Send to proctoring room (for proctors)
     const roomId = `proctoring_session_${sessionId}`;
@@ -1863,7 +1766,6 @@ if (require.main === module) {
 
   module.exports(io, app);
 
-  httpServer.listen(port, () =>
-    console.log(`socket server running at port ${port}`)
+  httpServer.listen(port, () => {}
   );
 }

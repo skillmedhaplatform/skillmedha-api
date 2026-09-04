@@ -382,9 +382,7 @@ io.on("connection", (socket) => {
             { $push: { jobAssessmentProgress: progData.insertedId.toString() } }
           );
         }
-      } catch (error) {
-        console.log({ err: error.message });
-      }
+      } catch (error) {}
 
       io.to(socket.id)
         .to(findUser.ConnectedSocketId)
@@ -402,9 +400,7 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("disconnect", () => {
-    console.log(`Client disconnected: ${socket.id}`);
-  });
+  socket.on("disconnect", () => {});
 
   socket.on("error", (error) => {
     console.error("Socket error:", error);
@@ -421,7 +417,6 @@ if (require.main === module) {
 
   module.exports(io, app);
 
-  httpServer.listen(port, () =>
-    console.log(`Job Assessment socket server running at port ${port}`)
+  httpServer.listen(port, () => {}
   );
 }

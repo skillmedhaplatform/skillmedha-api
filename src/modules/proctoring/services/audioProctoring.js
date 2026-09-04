@@ -30,10 +30,6 @@ class AgoraAudioProcessor {
   // ✅ ADD THE MISSING METHOD
   async analyzeAudioBuffer(audioBuffer, sessionId, duration = 5000) {
     try {
-      console.log(
-        `🎤 AgoraAudioProcessor: Delegating audio buffer analysis for session ${sessionId}`
-      );
-
       // Delegate to the internal audio analyzer
       return await this.audioAnalyzer.analyzeAudioBuffer(
         audioBuffer,
@@ -66,8 +62,6 @@ class AgoraAudioProcessor {
   // Start audio analysis using Agora Cloud Recording
   async startAudioAnalysis(sessionId, channelName, studentUID) {
     try {
-      console.log(`🎙️ Starting audio analysis for session: ${sessionId}`);
-
       // Validate required environment variables
       const requiredEnvVars = [
         "AWS_REGION",
@@ -138,7 +132,6 @@ class AgoraAudioProcessor {
       // Monitor for new audio files and analyze them
       this.monitorAudioFiles(sessionId, recordingId.sid, studentUID);
 
-      console.log(`✅ Audio analysis started for session: ${sessionId}`);
       return recordingId.sid;
     } catch (error) {
       console.error("❌ Failed to start audio analysis:", error);
@@ -169,7 +162,6 @@ class AgoraAudioProcessor {
       });
 
       if (response.data && response.data.resourceId) {
-        console.log(`✅ Acquired Agora resource: ${response.data.resourceId}`);
         return response.data.resourceId;
       } else {
         throw new Error("Failed to acquire Agora resource");
@@ -182,15 +174,10 @@ class AgoraAudioProcessor {
 
   // ✅ FIXED: Monitor audio files with better error handling
   async monitorAudioFiles(sessionId, recordingId, studentUID) {
-    console.log(`👁️ Starting audio file monitoring for session: ${sessionId}`);
-
     const monitoringInterval = setInterval(async () => {
       try {
         // Check if session is still active
         if (!this.activeRecordings.has(sessionId)) {
-          console.log(
-            `🛑 Session ${sessionId} no longer active, stopping monitoring`
-          );
           clearInterval(monitoringInterval);
           return;
         }
@@ -203,7 +190,6 @@ class AgoraAudioProcessor {
         );
 
         if (!objects || objects.length === 0) {
-          console.log(`📁 No audio files found for session: ${sessionId}`);
           return;
         }
 
@@ -214,7 +200,6 @@ class AgoraAudioProcessor {
             obj.Key.endsWith(".wav") ||
             obj.Key.endsWith(".aac")
           ) {
-            console.log(`🎵 Processing audio file: ${obj.Key}`);
             await this.processAudioFile(sessionId, obj.Key, studentUID);
           }
         }
@@ -230,8 +215,6 @@ class AgoraAudioProcessor {
   // ✅ FIXED: Process audio file with better error handling
   async processAudioFile(sessionId, s3Key, studentUID) {
     try {
-      console.log(`🔄 Processing audio file: ${s3Key}`);
-
       // Download audio file from Azure Blob
       const audioBody = await azureBlobService.downloadBlob(
         this.containerName,
@@ -250,11 +233,6 @@ class AgoraAudioProcessor {
         studentUID
       );
 
-      console.log(`📊 Audio analysis complete for ${s3Key}:`, {
-        violations: analysis.violations?.length || 0,
-        confidence: analysis.confidence,
-      });
-
       // Process violations if any
       if (analysis.violations && analysis.violations.length > 0) {
         await this.handleAudioViolations(sessionId, analysis);
@@ -265,8 +243,6 @@ class AgoraAudioProcessor {
         this.containerName,
         s3Key
       );
-
-      console.log(`🗑️ Cleaned up processed file: ${s3Key}`);
     } catch (error) {
       console.error(`❌ Audio file processing error for ${s3Key}:`, error);
     }
@@ -275,8 +251,6 @@ class AgoraAudioProcessor {
   // ✅ FIXED: Handle audio violations with proper error handling
   async handleAudioViolations(sessionId, analysis) {
     try {
-      console.log(`🚨 Processing audio violations for session: ${sessionId}`);
-
       // Store violations in database (if available)
       try {
         const { proctoringSessions } =
@@ -298,10 +272,6 @@ class AgoraAudioProcessor {
             },
           }
         );
-
-        console.log(
-          `💾 Audio violations stored in database for session: ${sessionId}`
-        );
       } catch (dbError) {
         console.warn(
           `⚠️ Could not store violations in database:`,
@@ -317,10 +287,6 @@ class AgoraAudioProcessor {
           analysis,
           timestamp: new Date(),
         });
-
-        console.log(
-          `📡 Real-time violation alert sent for session: ${sessionId}`
-        );
       } catch (socketError) {
         console.warn(
           `⚠️ Could not send real-time notification:`,
@@ -347,7 +313,6 @@ class AgoraAudioProcessor {
       });
 
       if (response.data && response.data.sid) {
-        console.log(`✅ Agora recording started: ${response.data.sid}`);
         return response.data;
       } else {
         throw new Error("Invalid response from Agora recording start");
@@ -396,8 +361,6 @@ class AgoraAudioProcessor {
   // ✅ ADD: Stop audio analysis
   async stopAudioAnalysis(sessionId) {
     try {
-      console.log(`🛑 Stopping audio analysis for session: ${sessionId}`);
-
       const recordingDetails = this.activeRecordings.get(sessionId);
       if (!recordingDetails) {
         console.warn(`⚠️ No active recording found for session: ${sessionId}`);
@@ -433,7 +396,6 @@ class AgoraAudioProcessor {
       // Clean up recording details
       this.activeRecordings.delete(sessionId);
 
-      console.log(`✅ Audio analysis stopped for session: ${sessionId}`);
       return response.data;
     } catch (error) {
       console.error(

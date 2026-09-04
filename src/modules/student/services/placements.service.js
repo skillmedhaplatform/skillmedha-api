@@ -327,12 +327,7 @@ module.exports.createAJob = async (req, res) => {
         };
 
         notifyJobPosting(orgId, req.tenantDB, jobNotificationData, access)
-          .then((result) => {
-            console.log(
-              `✅ New job notification sent to students in org ${orgId}:`,
-              result
-            );
-          })
+          .then((result) => {})
           .catch((err) => {
             console.error(
               `❌ New job notification failed for org ${orgId}:`,
@@ -515,12 +510,7 @@ module.exports.updateAJob = async (req, res) => {
           jobNotificationData,
           access || findJob?.access
         )
-          .then((result) => {
-            console.log(
-              `✅ Job update notification sent to students in org ${orgId}:`,
-              result
-            );
-          })
+          .then((result) => {})
           .catch((err) => {
             console.error(
               `❌ Job update notification failed for org ${orgId}:`,
@@ -1680,8 +1670,6 @@ module.exports.createJobAssessment = async (req, res) => {
 
     res.status(200).json({ data: insertedData });
   } catch (error) {
-    console.log(error);
-
     res.status(500).json({ err: error.message });
   }
 };
@@ -1948,8 +1936,6 @@ module.exports.getAllJobAssessment = async (req, res) => {
       message: "Job assessments retrieved successfully",
     });
   } catch (error) {
-    console.log(error);
-
     res.status(500).json({ err: error.message });
   }
 };
@@ -2216,11 +2202,7 @@ module.exports.addAssessmentToStudent = async (req, res) => {
           );
 
           // If assessment was found and updated in this org, log it
-          if (assessmentUpdateResult.matchedCount > 0) {
-            console.log(
-              `Assessment ${assessmentId} updated in org ${orgId} with ${studentsToUpdate.length} students`
-            );
-          }
+          if (assessmentUpdateResult.matchedCount > 0) {}
         } catch (error) {
           console.error(
             `Error updating assessment in org ${orgId}:`,
@@ -3618,11 +3600,7 @@ module.exports.updateStudentAndJobStatus = async (req, res) => {
             $set: { "appliedJobs.$.status": status },
           }
         );
-      } catch (localUpdateError) {
-        console.log(
-          `Student ${studentId} not found in local DB, only updated in source org`
-        );
-      }
+      } catch (localUpdateError) {}
     }
 
     return res.status(200).json({
@@ -3852,11 +3830,7 @@ module.exports.scheduleInterview = async (req, res) => {
             }
           );
         }
-      } catch (localUpdateError) {
-        console.log(
-          `Could not update local student record: ${localUpdateError.message}`
-        );
-      }
+      } catch (localUpdateError) {}
     }
 
     return res.status(200).json({

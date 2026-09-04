@@ -32,9 +32,6 @@ class AgoraService {
       accountId: process.env.AWS_ACCOUNT_ID,
     });
     this.frameProcessor = new AWSVideoProcessor();
-    console.log("✅ AgoraService initialized with live proctoring");
-
-    console.log("Agora Service initialized with App ID:", this.appId);
   }
 
   generateToken(
@@ -56,9 +53,6 @@ class AgoraService {
         privilegeExpiredTs
       );
 
-      console.log(
-        `Generated token for channel: ${channelName}, uid: ${uid}, role: ${role}`
-      );
       return token;
     } catch (error) {
       console.error("Token generation failed:", error);
@@ -84,8 +78,6 @@ class AgoraService {
         throw new Error("Channel name is required");
       }
 
-      console.log(`Creating proctoring channel: ${channelName}`);
-
       const { proctors = [], students = [] } = participants;
 
       // Create channel info and store it immediately
@@ -102,8 +94,6 @@ class AgoraService {
 
       // IMPORTANT: Store the channel so joinChannel can find it
       this.activeChannels.set(channelName, channelInfo);
-
-      console.log(`Channel ${channelName} created successfully`);
 
       return {
         success: true,
@@ -130,15 +120,8 @@ class AgoraService {
   // In agoraService.js - Update the joinChannel method
   async joinChannel(channelName, uid, userType, options = {}) {
     try {
-      console.log(
-        `Attempting to join channel: ${channelName}, uid: ${uid}, userType: ${userType}`
-      );
-
       let channel = this.activeChannels.get(channelName);
       if (!channel) {
-        console.log(
-          `Channel ${channelName} not found, creating it automatically...`
-        );
         const createResult = await this.createProctoringChannel(channelName, {
           students: userType === "student" ? [uid] : [],
           proctors: userType === "proctor" ? [uid] : [],
@@ -194,10 +177,6 @@ class AgoraService {
         isActive: true,
       });
 
-      console.log(
-        `User ${uid} successfully joined channel ${channelName} as ${userType}`
-      );
-
       return {
         success: true,
         token,
@@ -218,8 +197,6 @@ class AgoraService {
 
   async startLiveProctoring(sessionId, studentId) {
     try {
-      console.log("🎥 Starting HYBRID live proctoring");
-
       // 1. START REAL-TIME STREAMING (Primary)
       const streamResult = await this.liveProcessor.startLiveProcessing(
         sessionId,
@@ -266,10 +243,6 @@ class AgoraService {
       const violations = violationData.violations;
 
       for (const violation of violations) {
-        console.log(
-          `🚨 Processing violation: ${violation.type} - ${violation.message}`
-        );
-
         // ✅ INTEGRATE: Send to your existing socket server
         if (this.io) {
           this.io.emit("violationAlert", {
@@ -294,12 +267,9 @@ class AgoraService {
 
   async leaveChannel(uid) {
     try {
-      console.log(`User ${uid} leaving channel`);
-
       const session = this.userSessions.get(uid);
 
       if (!session) {
-        console.log(`No session found for uid: ${uid}`);
         return {
           success: true,
           message: "No active session found",
@@ -315,7 +285,6 @@ class AgoraService {
         } else {
           channel.proctors.delete(uid);
         }
-        console.log(`Removed uid ${uid} from channel ${session.channelName}`);
       }
 
       this.userSessions.delete(uid);
@@ -336,10 +305,7 @@ class AgoraService {
 
   async stopLiveProctoring(sessionId) {
     try {
-      console.log(`🛑 Stopping live proctoring for session: ${sessionId}`);
-
       const result = await this.liveProcessor.stopLiveProcessing(sessionId);
-      console.log("✅ Live proctoring stopped:", result);
 
       return result;
     } catch (error) {
@@ -386,12 +352,9 @@ class AgoraService {
 
   async closeChannel(channelName) {
     try {
-      console.log(`Closing channel: ${channelName}`);
-
       const channel = this.activeChannels.get(channelName);
 
       if (!channel) {
-        console.log(`Channel ${channelName} not found for closing`);
         return {
           success: true,
           message: "Channel not found (may already be closed)",
@@ -410,10 +373,6 @@ class AgoraService {
       usersToRemove.forEach((uid) => {
         this.userSessions.delete(uid);
       });
-
-      console.log(
-        `Channel ${channelName} closed, removed ${usersToRemove.length} users`
-      );
 
       return {
         success: true,

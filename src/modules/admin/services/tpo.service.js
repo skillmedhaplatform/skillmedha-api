@@ -78,7 +78,6 @@ module.exports.createTpo = async (req, res) => {
       token,
     });
   } catch (error) {
-    console.log(`error while creating user : ${error.message}`);
     res
       .status(500)
       .json({ err: `error while creating user : ${error.message}` });
@@ -120,7 +119,6 @@ module.exports.loginTpo = async (req, res) => {
       .status(200)
       .send({ msg: "loggedin successfully", ...loginData, token: token });
   } catch (error) {
-    console.log(`error while login user : ${error.message}`);
     res.status(500).json({ err: `error while login user : ${error.message}` });
   }
 };
@@ -230,7 +228,6 @@ module.exports.deleteTpo = async (req, res) => {
     const findUser = await tpo.findOne({
       globalId: tpoId,
     });
-    console.log(findUser);
 
     if (!findUser) throw new Error("User not registered");
 

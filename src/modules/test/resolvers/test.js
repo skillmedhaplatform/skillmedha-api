@@ -179,7 +179,6 @@ const resolvers = {
 
         return { tests: data, pageInfo: { hasNextPage: hasMore } };
       } catch (error) {
-        console.log(error);
         return { err: error.message };
       }
     },
@@ -241,7 +240,6 @@ const resolvers = {
 
         return filteredQuestionData;
       } catch (error) {
-        console.log(error);
         return { err: error.message };
       }
     },
@@ -295,7 +293,6 @@ const resolvers = {
           res.push(data);
         }
       } catch (error) {
-        console.log({ err: error.message });
         return res;
       }
       return res;

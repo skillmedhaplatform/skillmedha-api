@@ -320,9 +320,7 @@ async function updateTest(req, res) {
         updatedTestData,
         req.body.access
       )
-        .then((result) => {
-          console.log("✅ Test update notification result:", result);
-        })
+        .then((result) => {})
         .catch((err) => {
           console.error("❌ Test update notification failed:", err);
         });
@@ -985,7 +983,6 @@ async function bulkUploadQuestions(req, res) {
     if (req.file && req.file.path) {
       try {
         await fs.unlink(req.file.path);
-        console.log(`✅ Deleted temporary file: ${req.file.path}`);
       } catch (unlinkError) {
         console.error(`❌ Error deleting file: ${unlinkError.message}`);
         // Don't throw error, just log it
@@ -1328,7 +1325,6 @@ async function bulkUploadQuestionsToBank(req, res) {
     if (req.file && req.file.path) {
       try {
         await fs.unlink(req.file.path);
-        console.log(`✅ Deleted temporary file: ${req.file.path}`);
       } catch (unlinkError) {
         console.error(`❌ Error deleting file: ${unlinkError.message}`);
       }
@@ -1474,17 +1470,14 @@ async function removeQuestionFromTest(req, res) {
 
 // 16. DELETE QUESTION
 async function deleteQuestion(req, res) {
-  console.log("DeleteQuestion API called with:", req.body);
   const { questions, test } = connectTodb(req.tenantDB);
   try {
     const { questionId } = req.body;
     const newQuestionId = new mongoDB.ObjectId(questionId);
     const findQuestion = await questions.findOne({ _id: newQuestionId });
-    console.log("Found question:", findQuestion ? findQuestion._id : "Not found");
     if (!findQuestion?._id)
       throw new Error("No Questions to delete with that QuestionId");
     const data = await questions.deleteOne({ _id: findQuestion._id });
-    console.log("Delete result:", data);
     await test.updateMany(
       { questions: { $in: [questionId, new mongoDB.ObjectId(questionId)] } },
       { $pull: { questions: { $in: [questionId, new mongoDB.ObjectId(questionId)] } } }
@@ -1494,7 +1487,6 @@ async function deleteQuestion(req, res) {
       deletedFromQuestionCollection: data,
     });
   } catch (error) {
-    console.log("Error in deleteQuestion:", error.message);
     res.send({ err: error.message });
   }
 }
@@ -1741,7 +1733,7 @@ async function saveTestProgress(req, res) {
 
     const findStudent = newStudentId
       ? await student.findOne({ _id: newStudentId })
-      : await student.findOne({ _id: studentId })
+      : (await student.findOne({ _id: studentId }))
         ? await student.findOne({ _id: studentId })
         : null;
 
@@ -1749,7 +1741,7 @@ async function saveTestProgress(req, res) {
     if (newTestId) {
       findTest = await test.findOne({ _id: newTestId });
     } else {
-      findTest = await test.findOne({ _id: testId }) || await test.findOne({ _id: new mongoDB.ObjectId(testId) }) || null;
+      findTest = (await test.findOne({ _id: testId })) || (await test.findOne({ _id: new mongoDB.ObjectId(testId) })) || null;
     }
 
     if (!findStudent) {

@@ -166,17 +166,7 @@ function sendVerificationEmail(
     html: html,
   };
   return transporter.sendMail(mailOptions, function (error, info) {
-    if (error) {
-      console.log({
-        status: true,
-        respMesg: error,
-      });
-    } else {
-      console.log({
-        status: true,
-        respMesg: "Email Sent Successfully",
-      });
-    }
+    if (error) {} else {}
   });
 }
 
@@ -616,19 +606,8 @@ app.post(
       };
 
       transporter.sendMail(mailOptions, function (error, info) {
-        if (error) {
-          console.log({
-            status: true,
-            respMesg: error,
-          });
-        } else {
-          console.log({
-            status: true,
-            respMesg: "Email Sent Successfully",
-          });
-        }
+        if (error) {} else {}
       });
-      console.log(error);
 
       res.status(500).send({ err: error.message });
     }
@@ -999,7 +978,6 @@ app.post(
     if (!req.tenantDB) return res.status(500).json({ error: "No tenant DB available" });
     const { student, departments } = connectTodb(req.tenantDB);
     const { mainDBusers } = getGlobalCollections();
-    console.log('here getiing')
     try {
       const { userID } = req.params;
       const { departmentId } = req.body;
@@ -1197,7 +1175,6 @@ app.post(
 
       res.send({ msg: "Students deleted" });
     } catch (error) {
-      console.log(error);
       res.send(error.message);
     }
   },

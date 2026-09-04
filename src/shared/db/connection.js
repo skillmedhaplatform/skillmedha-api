@@ -27,7 +27,6 @@ async function getSharedMongoClient() {
   if (!sharedClient) {
     sharedClient = new MongoClient(getMongoUrl());
     await sharedClient.connect();
-    console.log('[DB] Shared MongoDB client connected');
   }
   return sharedClient;
 }
@@ -40,7 +39,6 @@ async function connectSharedDB() {
   sharedDB = client.db(config.mongo.sharedDbName);
   // Initialise global collections now that client is connected
   _initGlobalCollections();
-  console.log(`[DB] Connected to shared DB: ${config.mongo.sharedDbName}`);
   return sharedDB;
 }
 

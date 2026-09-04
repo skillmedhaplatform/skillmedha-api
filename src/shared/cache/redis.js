@@ -23,7 +23,6 @@ if (config.redis.enabled) {
 
   redisClient.on('ready', () => {
     redisEnabled = true;
-    console.log('[Redis] Connected');
   });
 
   redisClient.on('error', (err) => {

@@ -24,7 +24,6 @@ router.post(
   selectTenantDB,
   async (req, res) => {
     try {
-      console.log("📝 Creating exam session - START");
       const { testId } = req.params;
       const { companyOrg } = req.body;
       const studentId = req.userID;
@@ -41,8 +40,6 @@ router.post(
       });
 
       if (existingSession) {
-        console.log("♻️ Returning existing session");
-
         // Start analysis for existing session
         if (existingSession.proctoringConfig?.analysisInterval?.enabled) {
           await startProctoringAnalysis(
@@ -63,8 +60,6 @@ router.post(
         });
       }
 
-      // Create new session
-      console.log("🆕 Creating new session");
       const channelName = `exam_${studentId}_${Date.now()}`;
       const testData = await jobAssessments.findOne({
         _id: new ObjectId(testId),
@@ -144,10 +139,6 @@ router.post(
 // ✅ UNIFIED PROCTORING ANALYSIS STARTER
 async function startProctoringAnalysis(sessionId, config, studentId) {
   try {
-    console.log(
-      `🎬 Starting unified proctoring analysis for session ${sessionId}`
-    );
-
     const notificationCallback = (analysisData) => {
       // Send violations to socket server
       if (process.env.SOCKET_SERVER_URL) {
@@ -168,8 +159,6 @@ async function startProctoringAnalysis(sessionId, config, studentId) {
       analyzer.startRandomizedAnalysis(sessionId, config, notificationCallback),
       analyzer.videoProcessor.startLiveStreamProcessing(sessionId, studentId),
     ]);
-
-    console.log("✅ All proctoring analysis started successfully");
   } catch (error) {
     console.error("❌ Failed to start proctoring analysis:", error);
   }
@@ -177,10 +166,6 @@ async function startProctoringAnalysis(sessionId, config, studentId) {
 
 async function startLiveProctoringAnalysis(sessionId, config, studentId) {
   try {
-    console.log(
-      `🎯 Starting HYBRID proctoring analysis for session ${sessionId}`
-    );
-
     // Use AgoraService's enhanced live proctoring
     const result = await agoraService.startLiveProctoring(sessionId, studentId);
 
@@ -194,7 +179,6 @@ async function startLiveProctoringAnalysis(sessionId, config, studentId) {
       }
     );
 
-    console.log("✅ Hybrid proctoring analysis started successfully");
     return result;
   } catch (error) {
     console.error("❌ Failed to start hybrid proctoring analysis:", error);
@@ -355,8 +339,6 @@ router.post(
     try {
       const { sessionId, frameBuffer, timestamp } = req.body;
 
-      console.log(`🎬 Processing live frame for session ${sessionId}`);
-
       if (!frameBuffer || !sessionId) {
         return res.status(400).json({
           success: false,
@@ -374,9 +356,6 @@ router.post(
       );
 
       if (result.success && result.analysis.violations.length > 0) {
-        console.log("🚨 Live violations detected:", result.analysis.violations);
-        console.log("🚨 Live violations detected:", result);
-
         // Send to socket server if configured
         if (process.env.SOCKET_SERVER_URL) {
           try {

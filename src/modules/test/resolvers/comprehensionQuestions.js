@@ -12,7 +12,6 @@ const resolvers = {
         const data = await comprehensionQuestions.find({}).toArray();
         return data;
       } catch (error) {
-        console.log(error);
         return { err: error.message };
       }
     },

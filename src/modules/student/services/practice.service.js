@@ -127,7 +127,6 @@ const findInAllTenants = async (
     // Return a default value for unsupported methods
     return method === "find" ? [] : null;
   } catch (error) {
-    console.log("Error in findInAllTenants:", error);
     throw error;
   }
 };
@@ -290,7 +289,23 @@ module.exports.getTopicsBySubject = async (req, res) => {
     const { subjectId } = req.params;
     const query = { subjectId: new ObjectId(subjectId) };
     const data = await findInAllTenants("topics", query, "find");
-    res.status(200).json({ data });
+
+    // Get number of questions for each topic
+    const topicsWithQuestionCount = await Promise.all(
+      data.map(async (topic) => {
+        const questionCount = await findInAllTenants(
+          "questions",
+          { topicId: topic._id },
+          "countDocuments"
+        );
+        return {
+          ...topic,
+          totalQuestions: questionCount,
+        };
+      })
+    );
+
+    res.status(200).json({ data: topicsWithQuestionCount });
   } catch (error) {
     res.status(500).json({ err: error.message });
   }
@@ -766,7 +781,6 @@ module.exports.bulkUploadPracQuestions = async (req, res) => {
     if (req.file && req.file.path) {
       try {
         await fs.unlink(req.file.path);
-        console.log(`✅ Deleted temporary file: ${req.file.path}`);
       } catch (unlinkError) {
         console.error(`❌ Error deleting file: ${unlinkError.message}`);
       }
@@ -1092,7 +1106,7 @@ module.exports.getStudentPracResults = async (req, res) => {
   }
 };
 
-module.exports.saveTopMockScore = async (req, res) => { console.log("saveTopMockScore called:", req.body.testId, typeof req.body.testId);
+module.exports.saveTopMockScore = async (req, res) => {
   const { student, mockTestAttempts } = connectTodb(req.tenantDB);
   try {
     const { testId, attempt } = req.body;
@@ -1128,7 +1142,7 @@ module.exports.saveTopMockScore = async (req, res) => { console.log("saveTopMock
   }
 };
 
-module.exports.getTopMockScores = async (req, res) => { console.log("getTopMockScores called:", req.params.testId, typeof req.params.testId);
+module.exports.getTopMockScores = async (req, res) => {
   const { student, mockTestAttempts } = connectTodb(req.tenantDB);
   try {
     const { testId } = req.params;

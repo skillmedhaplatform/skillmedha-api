@@ -1683,7 +1683,6 @@ app.post(
         _id: new mongoDb.ObjectId(studentId),
       });
       const { enrolledData } = globalStuData;
-      console.log(enrolledData);
 
       if (enrolledData && enrolledData?.length) {
         enrolledData
@@ -2674,8 +2673,6 @@ app.post("/updateLastAccessed", async (req, res) => {
       });
     }
 
-    console.log("Updating lastAccessed - userId:", userId, "itemId:", itemId, "itemType:", itemType);
-
     const updatedData = await lastAccessedCollection.findOneAndUpdate(
       { userId, itemId },
       {
@@ -2690,8 +2687,6 @@ app.post("/updateLastAccessed", async (req, res) => {
       },
       { upsert: true, returnDocument: "after" }
     );
-
-    console.log("Updated lastAccessed data:", updatedData);
 
 
     res.status(200).json({
@@ -2715,7 +2710,7 @@ async function resolveCourse(courseId, tenantDB) {
 
   const kSquareDB = await getTenantDB("KSquare");
   const { internships: kCourses } = connectTodb(kSquareDB);
-  return await kCourses.findOne({ _id: new mongoDB.ObjectId(courseId) }) || null;
+  return (await kCourses.findOne({ _id: new mongoDB.ObjectId(courseId) })) || null;
 }
 
 // Helper: compute cart total
