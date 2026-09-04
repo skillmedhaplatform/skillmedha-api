@@ -15,15 +15,13 @@ const proctoringRekognitionSvc = require('./services/proctoring.service'); // Ro
 
 const router = Router();
 
-// Auth + tenant DB required for all proctoring routes
-router.use(mandatory);
-router.use(selectTenantDB);
-
-// ─── Agora (live proctoring session management) ───────────────────────────────
-router.use('/agora', agoraSvc);
-
-// ─── Rekognition (face detection, comparison) ─────────────────────────────────
-router.use('/proctor', proctoringRekognitionSvc);
+// Auth + tenant DB required for all proctoring routes.
+// Scoped per sub-path (not a bare router.use()) — this router is mounted at
+// '/' in app.js, so an unscoped router.use(mandatory) here would require auth
+// for every request in the whole app, including unrelated routers mounted
+// after it (aiRouter, dashboardRoutes, etc).
+router.use('/agora', mandatory, selectTenantDB, agoraSvc);
+router.use('/proctor', mandatory, selectTenantDB, proctoringRekognitionSvc);
 
 // ─── Error handler for proctoring routes ─────────────────────────────────────
 router.use((err, req, res, next) => {

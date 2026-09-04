@@ -64,7 +64,7 @@ async function getRazorpayCredentials(req, res) {
     const credential = await collection.findOne({});
 
     if (!credential) {
-      return res.status(404).json({
+      return res.status(200).json({
         success: false,
         message: "No Razorpay credentials found",
       });
