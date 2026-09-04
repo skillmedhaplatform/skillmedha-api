@@ -28,7 +28,6 @@ const testRouter = require('./modules/test/index');
 const proctoringRouter = require('./modules/proctoring/index');
 
 // Shared service utilities (no re-export changes)
-// Note: AI service runs as separate microservice on port 7172 - see src/shared/utils/ai.js
 const azureBlobService = require('./shared/utils/azureBlobService');
 const zoomRouter = require('./shared/utils/zoom');
 
@@ -46,10 +45,6 @@ const {
   updateMeeting,
   getRecordedMeeting,
 } = require('./shared/utils/zoom');
-
-// ─── OpenAI ───────────────────────────────────────────────────────────────────
-const OpenAI = require('openai');
-const openai = new OpenAI({ organization: config.openai.orgId, project: config.openai.projId });
 
 // ─── ffmpeg ───────────────────────────────────────────────────────────────────
 const ffmpegPath = require('ffmpeg-static');
@@ -221,21 +216,34 @@ async function transcribeAudio(audio) {
     if (isAudioSilentOrEmpty(audio)) {
       throw new Error("Oops! We couldn't hear you. Please try speaking a bit louder.");
     }
-    const langDetect = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(audio),
-      model: 'whisper-1',
-      response_format: 'verbose_json',
+
+    // Cloudflare Workers AI's Whisper model does language detection and
+    // transcription in a single call (unlike the old two-call OpenAI flow),
+    // and takes the audio file directly as base64 — no separate upload step.
+    const model = '@cf/openai/whisper-large-v3-turbo';
+    const url = `https://api.cloudflare.com/client/v4/accounts/${process.env.CLOUDFLARE_ACCOUNT_ID}/ai/run/${model}`;
+    const audioBase64 = fs.readFileSync(audio).toString('base64');
+
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ audio: audioBase64 }),
     });
-    if (langDetect.language !== 'english') {
-      throw new Error(`Unsupported language: ${langDetect.language}. Please record in English.`);
+
+    const json = await resp.json();
+    if (!resp.ok || json.success === false) {
+      throw new Error(json?.errors?.[0]?.message || `Transcription request failed (${resp.status})`);
     }
-    const transcription = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(audio),
-      model: 'whisper-1',
-      language: 'en',
-      response_format: 'verbose_json',
-    });
-    return transcription;
+
+    const language = json.result?.transcription_info?.language || '';
+    if (language && language !== 'en') {
+      throw new Error(`Unsupported language: ${language}. Please record in English.`);
+    }
+
+    return { text: json.result?.text || '', language };
   } catch (error) {
     logger.error('transcribeAudio error:', error.message);
     return { err: error.message, text: '' };
