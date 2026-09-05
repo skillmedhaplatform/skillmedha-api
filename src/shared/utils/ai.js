@@ -265,100 +265,25 @@ const getStartOfTodayUTC = () => {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 };
 
-async function quotaLimiter(req, res, next) {
-  try {
-    const { orgId } = req;
-
-    // KSquare has infinite quota
-    if (orgId === "KSquare") {
-      return next();
-    }
-
-    // Derive ObjectId
-    const parts = orgId.split("_");
-    if (parts.length < 2) {
-      return res.status(400).json({ error: "Invalid orgId format" });
-    }
-
-    const orgObjectId = new mongoDB.ObjectId(parts[1]);
-
-    // Load org document
-    const orgDoc = await organisation.findOne({ _id: orgObjectId });
-
-    // Suspended?
-    if (orgDoc?.suspended) {
-      return res.status(403).json({
-        error: "Organisation suspended due to billing/compliance",
-      });
-    }
-
-    // Extract daily quota (fallback to 50k tokens)
-    const dailyLimit = orgDoc?.aiTokenLimit || 50000;
-
-    // Aggregate token usage for today
-    const usageAgg = await aiUsageCollection
-      .aggregate([
-        {
-          $match: {
-            orgId,
-            createdAt: { $gte: getStartOfTodayUTC() },
-          },
-        },
-        {
-          $group: {
-            _id: null,
-            used: { $sum: "$totalTokens" },
-          },
-        },
-      ])
-      .toArray();
-
-    const tokensUsed = usageAgg.length ? usageAgg[0].used : 0;
-
-    // If exceeded
-    if (tokensUsed >= dailyLimit) {
-      return res.status(402).json({
-        error: "Daily AI token quota exceeded.",
-        tokensUsed,
-        dailyLimit,
-      });
-    }
-
-    // Attach usage info to req
-    req.orgQuota = {
-      tokensUsed,
-      dailyLimit,
-      remaining: dailyLimit - tokensUsed,
-    };
-
-    return next();
-  } catch (err) {
-    console.error("quotaLimiter error:", err);
-    return res.status(500).json({
-      error: "Quota check failed",
-      detail: err.message,
-    });
-  }
-}
-
 /*****************************************
  *  ACCOUNT-WIDE NEURON GUARD
  *****************************************/
-// quotaLimiter above only enforces a *per-org* token quota — it protects
-// orgs from each other, but has no relationship to Cloudflare's real
-// constraint: a single account-wide 10,000-neuron/day budget on the free
-// plan, shared by every org and every AI feature (this router, plus the
-// ATS resume analyzer in its own module). Many orgs could each stay under
-// their own token quota while collectively exhausting that shared budget
-// for everyone. This guard reserves a slice of it specifically for the
-// routes in this file, tracked in the real unit (neurons, from
-// ATSAnalysis.neuronsUsed).
+// A single account-wide 10,000-neuron/day budget on Cloudflare's free plan,
+// shared by every user, every org, and every AI feature (this router, plus
+// the ATS resume analyzer and the chat widget in their own modules). This
+// guard reserves a slice of it specifically for the routes in this file,
+// in the real unit (neurons) rather than tokens.
 //
-// The ATS checker reserves its own separate slice independently
-// (ATS_DAILY_NEURON_BUDGET, see atsController.js) — the two are sized to
-// comfortably sum to under the account's real 10,000/day, each guarding
-// its own usage without needing to query the other's data.
-const AI_DAILY_NEURON_BUDGET = parseInt(process.env.AI_DAILY_NEURON_BUDGET || "5000", 10);
+// Two other features reserve their own separate slices the same way, each
+// guarding its own usage without needing to query the others' data: the
+// ATS checker (ATS_DAILY_NEURON_BUDGET, atsController.js) and the chat
+// widget/course AI Assistant (CHAT_DAILY_NEURON_BUDGET, app.js — it calls
+// Cloudflare directly from the frontend, bypassing this router entirely).
+// Chat needs more headroom per visitor (anonymous, mid-conversation) than
+// this router's routes (bounded, one-off actions like a single code
+// check). Defaults: 4000 (ATS) + 3000 (this) + 2000 (chat) = 9000,
+// leaving a 1000-neuron safety margin under the account's real 10,000/day.
+const AI_DAILY_NEURON_BUDGET = parseInt(process.env.AI_DAILY_NEURON_BUDGET || "3000", 10);
 
 async function accountWideNeuronGuard(req, res, next) {
   try {
@@ -370,6 +295,9 @@ async function accountWideNeuronGuard(req, res, next) {
       .toArray();
 
     const neuronsUsed = usageAgg.length ? usageAgg[0].used : 0;
+    // Reused by quotaLimiter right below so it doesn't re-run this same
+    // aggregation a second time on every request.
+    req.aiGlobalNeuronsUsedToday = neuronsUsed;
 
     if (neuronsUsed >= AI_DAILY_NEURON_BUDGET) {
       return res.status(429).json({
@@ -384,6 +312,94 @@ async function accountWideNeuronGuard(req, res, next) {
     // feature; quotaLimiter and Cloudflare's own quota enforcement still
     // apply as backstops.
     return next();
+  }
+}
+
+/*****************************************
+ *  PER-USER QUOTA LIMITER
+ *****************************************/
+// A flat per-org token pool doesn't reflect actual usage: some orgs barely
+// touch AI features while a handful of active students in another org
+// could exhaust a shared org-wide bucket, and a fixed per-org number is
+// meaningless when accounts vary hugely in how many students actually use
+// it. Fairness needs to happen per *user* (mainly students, who are the
+// heavy repeat callers here) — and, mirroring the ATS checker's approach,
+// each user's allowance is NOT a fixed number either. It's tiered against
+// how much of this router's AI_DAILY_NEURON_BUDGET is still unspent:
+// generous when the budget is barely touched, automatically tightening as
+// it fills up, so one active student isn't capped low on a quiet day while
+// the shared budget sits mostly unused, and no fixed number is ever both
+// safe on a busy day and fair on a quiet one.
+const PER_USER_NEURON_TIERS = [
+  { remainingFractionAtLeast: 0.5, allowance: 500 },
+  { remainingFractionAtLeast: 0.2, allowance: 250 },
+  { remainingFractionAtLeast: 0.05, allowance: 100 },
+  { remainingFractionAtLeast: 0, allowance: 50 },
+];
+
+const getPerUserNeuronAllowance = (remainingFraction) => {
+  const tier = PER_USER_NEURON_TIERS.find((t) => remainingFraction >= t.remainingFractionAtLeast);
+  return tier.allowance;
+};
+
+async function quotaLimiter(req, res, next) {
+  try {
+    const { orgId, userID } = req;
+
+    // KSquare is the internal/staff org — kept exempt from the per-user
+    // cap as before. The account-wide guard above still protects the
+    // shared budget regardless.
+    if (orgId === "KSquare") {
+      return next();
+    }
+
+    if (!userID) {
+      return res.status(401).json({ error: "Authentication required." });
+    }
+
+    // Org suspension is a billing/compliance gate, not a usage-fairness
+    // one — kept as its own check, independent of the per-user quota.
+    const parts = (orgId || "").split("_");
+    if (parts.length >= 2) {
+      const orgDoc = await organisation.findOne({ _id: new mongoDB.ObjectId(parts[1]) });
+      if (orgDoc?.suspended) {
+        return res.status(403).json({
+          error: "Organisation suspended due to billing/compliance",
+        });
+      }
+    }
+
+    const userAgg = await aiUsageCollection
+      .aggregate([
+        { $match: { userId: userID, createdAt: { $gte: getStartOfTodayUTC() } } },
+        { $group: { _id: null, used: { $sum: "$neurons" } } },
+      ])
+      .toArray();
+    const userNeuronsUsed = userAgg.length ? userAgg[0].used : 0;
+
+    const globalNeuronsUsed = req.aiGlobalNeuronsUsedToday || 0;
+    const remainingFraction = Math.max(0, (AI_DAILY_NEURON_BUDGET - globalNeuronsUsed) / AI_DAILY_NEURON_BUDGET);
+    const userAllowance = getPerUserNeuronAllowance(remainingFraction);
+
+    if (userNeuronsUsed >= userAllowance) {
+      return res.status(402).json({
+        error: "You've reached today's fair-share limit for AI features, since a lot of students are using it right now. Please try again later today or tomorrow.",
+      });
+    }
+
+    req.userQuota = {
+      userNeuronsUsed,
+      userAllowance,
+      remaining: userAllowance - userNeuronsUsed,
+    };
+
+    return next();
+  } catch (err) {
+    console.error("quotaLimiter error:", err);
+    return res.status(500).json({
+      error: "Quota check failed",
+      detail: err.message,
+    });
   }
 }
 

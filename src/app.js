@@ -54,23 +54,7 @@ const ffprobePath = require('ffprobe-static').path;
 const app = express();
 const httpServer = http.createServer(app);
 
-const allowedOrigins = [
-  'https://skillmedha.com',
-  'https://www.skillmedha.com',
-  'http://localhost:3000',
-  'http://localhost:5173',
-  'http://localhost:8080'
-];
-
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  }
-}));
+app.use(cors({ origin: '*' }));
 app.use(compressionMiddleware);
 app.use(express.json({ limit: '200mb' }));
 app.use(express.urlencoded({ limit: '200mb', extended: true }));
@@ -132,49 +116,121 @@ app.get('/api/public/stats', async (req, res) => {
 // requiring a token for literally every unmatched request that reaches it —
 // including ones meant for aiRouter. Registering here, before any of that,
 // sidesteps the issue entirely.
+//
+// This chat (the floating widget AND the course-page "AI Assistant") calls
+// Cloudflare directly from the Next.js frontend (app/api/chat/route.js) —
+// it never touches src/shared/utils/ai.js, so it's invisible to that
+// router's accountWideNeuronGuard/quotaLimiter. Reserving its own slice
+// here, tracked the same way (neurons summed from aiUsageCollection,
+// UTC-aligned).
+//
+// The per-visitor cap below is NOT a fixed message count — a flat number
+// either blocks an active visitor while the shared pool sits mostly idle,
+// or lets many visitors collectively drain it. Same tiering philosophy as
+// the ATS checker (atsController.js) and this account's other AI router
+// (shared/utils/ai.js quotaLimiter): each visitor's allowance is a
+// percentage of the total budget, scaled by how much of it remains today.
+// Chat gets steeper fractions than those two (25/12.5/5/2.5% vs their
+// 12.5/6.25/2.5/1.25%) — a single authenticated student's daily usage on
+// ATS/ai.js is naturally bounded (a handful of analyses/checks), but a
+// visitor here is anonymous and mid-conversation, so the top tier needs
+// enough headroom for a real back-and-forth (~20 messages) rather than
+// cutting them off well below what the old flat 15/day cap allowed.
+const getStartOfTodayUTC = () => {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+};
+const CHAT_DAILY_NEURON_BUDGET = parseInt(process.env.CHAT_DAILY_NEURON_BUDGET || '2000', 10);
+
+const getPerVisitorNeuronAllowance = (remainingFraction, totalBudget) => {
+  const tierFraction =
+    remainingFraction >= 0.5 ? 0.25 :
+    remainingFraction >= 0.2 ? 0.125 :
+    remainingFraction >= 0.05 ? 0.05 :
+    0.025;
+  return totalBudget * tierFraction;
+};
+
 app.post('/ai/chatWidget/consume', async (req, res) => {
-  const CHAT_WIDGET_DAILY_LIMIT = parseInt(process.env.CHAT_WIDGET_DAILY_LIMIT || '20', 10);
   try {
     const { visitorId } = req.body;
     if (!visitorId || typeof visitorId !== 'string') {
       return res.status(400).json({ error: 'Missing visitorId' });
     }
 
-    const { chatWidgetUsage } = getGlobalCollections();
-    const day = new Date().toISOString().slice(0, 10); // UTC calendar day
+    const { aiUsageCollection } = getGlobalCollections();
+    const startOfDayUTC = getStartOfTodayUTC();
 
-    const doc = await chatWidgetUsage.findOneAndUpdate(
-      { visitorId, day },
-      { $inc: { count: 1 }, $setOnInsert: { createdAt: new Date() } },
-      { upsert: true, returnDocument: 'after' }
-    );
+    const [globalAgg, visitorAgg] = await Promise.all([
+      aiUsageCollection
+        .aggregate([
+          { $match: { type: 'chatWidget', createdAt: { $gte: startOfDayUTC } } },
+          { $group: { _id: null, used: { $sum: '$neurons' } } },
+        ])
+        .toArray(),
+      aiUsageCollection
+        .aggregate([
+          { $match: { type: 'chatWidget', visitorId, createdAt: { $gte: startOfDayUTC } } },
+          { $group: { _id: null, used: { $sum: '$neurons' } } },
+        ])
+        .toArray(),
+    ]);
 
-    const used = doc.count;
+    const globalNeuronsUsed = globalAgg.length ? globalAgg[0].used : 0;
+    const visitorNeuronsUsed = visitorAgg.length ? visitorAgg[0].used : 0;
 
-    if (used > CHAT_WIDGET_DAILY_LIMIT) {
+    if (globalNeuronsUsed >= CHAT_DAILY_NEURON_BUDGET) {
       return res.status(429).json({
         allowed: false,
-        limit: CHAT_WIDGET_DAILY_LIMIT,
-        used,
-        error: `Daily limit of ${CHAT_WIDGET_DAILY_LIMIT} messages reached. Please try again tomorrow.`,
+        error: 'Our chat assistant has reached its usage limit for now. Please try again later.',
+      });
+    }
+
+    const remainingFraction = Math.max(0, (CHAT_DAILY_NEURON_BUDGET - globalNeuronsUsed) / CHAT_DAILY_NEURON_BUDGET);
+    const visitorAllowance = getPerVisitorNeuronAllowance(remainingFraction, CHAT_DAILY_NEURON_BUDGET);
+
+    if (visitorNeuronsUsed >= visitorAllowance) {
+      return res.status(429).json({
+        allowed: false,
+        error: "You've reached today's fair-share limit for chat, since a lot of people are using it right now. Please try again later today or tomorrow.",
       });
     }
 
     return res.json({
       allowed: true,
-      limit: CHAT_WIDGET_DAILY_LIMIT,
-      used,
-      remaining: CHAT_WIDGET_DAILY_LIMIT - used,
+      remaining: Math.max(0, Math.round(visitorAllowance - visitorNeuronsUsed)),
     });
   } catch (err) {
     console.error('chatWidget/consume error:', err);
     // Fail open — a DB hiccup shouldn't block chat entirely.
-    return res.json({
-      allowed: true,
-      limit: CHAT_WIDGET_DAILY_LIMIT,
-      used: 0,
-      remaining: CHAT_WIDGET_DAILY_LIMIT,
+    return res.json({ allowed: true, remaining: null });
+  }
+});
+
+// Reports the actual neuron cost of a chat exchange back to the shared
+// tracking collection, so the checks above (and any future dashboarding)
+// reflect this feature's real spend — the frontend calls this right after
+// Cloudflare responds. Fire-and-forget from the caller's side; failures
+// here must never block the chat response already sent.
+app.post('/ai/chatWidget/trackUsage', async (req, res) => {
+  try {
+    const neurons = Number(req.body?.neurons) || 0;
+    const { visitorId, studentId } = req.body;
+    const { aiUsageCollection } = getGlobalCollections();
+    await aiUsageCollection.insertOne({
+      type: 'chatWidget',
+      visitorId: typeof visitorId === 'string' ? visitorId : null,
+      // Populated only for the course-page "AI Assistant" (a logged-in
+      // student) — the anonymous marketing widget has no student to
+      // attribute usage to, so this stays null there.
+      studentId: typeof studentId === 'string' && studentId ? studentId : null,
+      neurons,
+      createdAt: new Date(),
     });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('chatWidget/trackUsage error:', err);
+    return res.json({ ok: false });
   }
 });
 
@@ -336,10 +392,6 @@ app.post('/getMeetingDetails', async (req, res) => getMeetingDetails(req, res));
 app.get('/getAllMeetings', async (req, res) => getAllMeetings(req, res));
 app.post('/updateMeeting/:id', async (req, res) => updateMeeting(req, res));
 app.post('/getRecordedMeeting', async (req, res) => getRecordedMeeting(req, res));
-
-// ─── Public module (must be before routers that apply global mandatory auth) ────
-const publicRouter = require('./modules/public/index');
-app.use('/api/public', publicRouter);
 
 // ─── Role-based module routers ────────────────────────────────────────────────
 //
