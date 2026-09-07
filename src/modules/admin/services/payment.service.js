@@ -161,7 +161,17 @@ router.post("/createOrder", async (req, res) => {
         };
 
         transporters.sendMail(mailOptions, function (error, info) {
-          if (error) {} else {}
+          if (error) {
+            console.log({
+              status: true,
+              respMesg: error,
+            });
+          } else {
+            console.log({
+              status: true,
+              respMesg: "Email Sent Successfully",
+            });
+          }
         });
 
         res.status(200).json(order); // ✅ FIXED
@@ -322,7 +332,17 @@ router.post("/payment_links", async (req, res) => {
           };
 
           transporters.sendMail(mailOptions, function (error, info) {
-            if (error) {} else {}
+            if (error) {
+              console.log({
+                status: true,
+                respMesg: error,
+              });
+            } else {
+              console.log({
+                status: true,
+                respMesg: "Email Sent Successfully",
+              });
+            }
           });
         });
     } else {
@@ -330,7 +350,9 @@ router.post("/payment_links", async (req, res) => {
     }
     //  console.log(data)
     res.send("success");
-  } catch (error) {}
+  } catch (error) {
+    console.log(error.message);
+  }
 });
 
 router.post("/webhook", async (req, res) => {
@@ -388,6 +410,7 @@ router.post("/webhook", async (req, res) => {
       res.status(200).send({ data: "Success" });
     }
   } catch (error) {
+    console.log(error);
     res.status(200).send({ data: "Success" });
   }
 });
@@ -536,7 +559,17 @@ router.post("/getPayment", async (req, res) => {
 
         // Send success email
         transporters.sendMail(sucessMail(data), function (error, info) {
-          if (error) {} else {}
+          if (error) {
+            console.log({
+              status: false,
+              respMesg: error,
+            });
+          } else {
+            console.log({
+              status: true,
+              respMesg: "Email Sent Successfully",
+            });
+          }
         });
 
         return res.status(200).json({
@@ -550,7 +583,17 @@ router.post("/getPayment", async (req, res) => {
       var mailOptions = failMailTemplate(data);
 
       transporters.sendMail(mailOptions, function (error, info) {
-        if (error) {} else {}
+        if (error) {
+          console.log({
+            status: false,
+            respMesg: error,
+          });
+        } else {
+          console.log({
+            status: true,
+            respMesg: "Failed payment email sent",
+          });
+        }
       });
 
       return res.status(400).json({
@@ -676,8 +719,15 @@ router.post("/cart/createOrder", mandatory, selectTenantDB, async (req, res) => 
       return res.status(200).json({ orderId: null, enrolled: true, courseIds });
     }
 
-    const configData = await paymentConfigCollection.find({}).toArray();
-    const keyId = configData[0]?.keyId || process.env.RZP_ID;
+    // `instance` (Razorpay SDK client) is created once at module load from
+    // process.env.RZP_ID/RZP_SECRET and never re-reads paymentConfigCollection —
+    // so the order below is always created under the env key. The checkout
+    // widget key handed to the frontend MUST be that exact same key, or
+    // Razorpay rejects the widget with "Authentication failed" even though
+    // the order itself is valid. (Previously this read a DB-stored keyId
+    // that could silently drift from the env value — it had, by one
+    // truncated character, which is exactly what broke this.)
+    const keyId = process.env.RZP_ID;
 
     const order = await instance.orders.create({
       amount: totalAmount * 100,
@@ -809,7 +859,11 @@ router.post("/cart/verify", mandatory, selectTenantDB, async (req, res) => {
         notes: { name: `${student.firstName || ""} ${student.lastName || ""}`.trim() },
       }),
       (error, info) => {
-        if (error) {} else {}
+        if (error) {
+          console.log({ status: false, respMesg: error });
+        } else {
+          console.log({ status: true, respMesg: "Email Sent Successfully" });
+        }
       }
     );
 
@@ -820,6 +874,204 @@ router.post("/cart/verify", mandatory, selectTenantDB, async (req, res) => {
     });
   } catch (error) {
     console.error("Cart verify error:", error);
+    res
+      .status(500)
+      .json({ error: "Payment verification failed", details: error.message });
+  }
+});
+
+// ─── Buy Now (single course, bypasses the cart) ────────────────────────────
+// Mirrors the cart checkout above (same auth, same enrollment/payment
+// record shape, same zero-price auto-enroll path) but for exactly one
+// course a student wants to pay for right now, independent of whatever
+// else is sitting in their cart.
+
+async function resolveCourseForCheckout(courseId, tenantDB) {
+  const { internships: tenantCourses } = connectTodb(tenantDB);
+  let course = await tenantCourses.findOne({ _id: new mongoDB.ObjectId(courseId) });
+  if (course) return course;
+
+  const kSquareDB = await getTenantDB("KSquare");
+  const { internships: kCourses } = connectTodb(kSquareDB);
+  return kCourses.findOne({ _id: new mongoDB.ObjectId(courseId) });
+}
+
+router.post("/buyNow/createOrder", mandatory, selectTenantDB, async (req, res) => {
+  try {
+    const { courseId } = req.body;
+    if (!courseId) {
+      return res.status(400).json({ error: "courseId is required" });
+    }
+
+    const student = await mainDBusers.findOne({
+      _id: new mongoDB.ObjectId(req.userID),
+    });
+    if (!student) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    const alreadyEnrolled = (student.enrolledData || []).some(
+      (e) => e.refId === courseId
+    );
+    if (alreadyEnrolled) {
+      return res.status(400).json({ error: "You already enrolled this course" });
+    }
+
+    const course = await resolveCourseForCheckout(courseId, req.tenantDB);
+    if (!course) {
+      return res.status(404).json({ error: "Course not found" });
+    }
+
+    const type = course.type || "course";
+    // Never trust a client-supplied amount — resolve the real price
+    // server-side from the course record itself.
+    const price =
+      course.pricing?.finalPrice ??
+      course.discountedPrice ??
+      course.pricing?.currentPrice ??
+      course.pricing?.originalPrice ??
+      course.price ??
+      0;
+
+    if (price === 0) {
+      await mainDBusers.updateOne(
+        { _id: student._id },
+        {
+          $push: {
+            subscriptions: courseId,
+            installments: {
+              courseId,
+              firstInstallment: true,
+              secondInstallment: false,
+              amountCharged: 0,
+            },
+            enrolledData: { refId: courseId, createdAt: new Date(), active: true, type },
+          },
+        }
+      );
+
+      return res.status(200).json({ orderId: null, enrolled: true, courseId });
+    }
+
+    // Same reasoning as /cart/createOrder above: the widget key must match
+    // the env key `instance` actually used to create this order.
+    const keyId = process.env.RZP_ID;
+
+    const order = await instance.orders.create({
+      amount: price * 100,
+      currency: "INR",
+      receipt: uuidv4(),
+      notes: { courseId, type, userID: req.userID, orgId: req.orgId },
+    });
+
+    return res.status(200).json({
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      keyId,
+      courseName: course.title,
+    });
+  } catch (error) {
+    console.error("Buy Now createOrder error:", error);
+    res.status(500).json({ error: "Failed to create order" });
+  }
+});
+
+router.post("/buyNow/verify", mandatory, selectTenantDB, async (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return res.status(400).json({ error: "Missing payment verification fields" });
+    }
+
+    const body = razorpay_order_id + "|" + razorpay_payment_id;
+    const generated_signature = Crypto.createHmac("sha256", process.env.RZP_SECRET)
+      .update(body)
+      .digest("hex");
+
+    if (generated_signature !== razorpay_signature) {
+      return res.status(400).json({ success: false, error: "Invalid payment signature" });
+    }
+
+    const existingPayment = await payment.findOne({ orderId: razorpay_order_id });
+    if (existingPayment) {
+      return res.status(200).json({
+        success: true,
+        message: "Payment already processed",
+        enrolledCourses: existingPayment.courseIds || [],
+      });
+    }
+
+    const order = await instance.orders.fetch(razorpay_order_id);
+    const { courseId, type } = order.notes || {};
+    if (!courseId) {
+      return res.status(400).json({ error: "No course found for this order" });
+    }
+
+    const student = await mainDBusers.findOne({
+      _id: new mongoDB.ObjectId(order.notes.userID),
+    });
+    if (!student) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    const alreadyEnrolled = (student.enrolledData || []).some(
+      (e) => e.refId === courseId
+    );
+    const amountCharged = order.amount / 100;
+
+    const paymentdone = await payment.insertOne({
+      orderId: razorpay_order_id,
+      paymentId: razorpay_payment_id,
+      amountCharged,
+      currency: order.currency,
+      courseIds: [courseId],
+      email: student.email,
+      createdAt: new Date(),
+    });
+
+    if (!alreadyEnrolled) {
+      await mainDBusers.updateOne(
+        { _id: student._id },
+        {
+          $push: {
+            payment: paymentdone.insertedId.toString(),
+            subscriptions: courseId,
+            installments: {
+              courseId,
+              firstInstallment: true,
+              secondInstallment: false,
+              amountCharged,
+            },
+            enrolledData: { refId: courseId, createdAt: new Date(), active: true, type },
+          },
+          $set: { amountCharged },
+        }
+      );
+    }
+
+    transporters.sendMail(
+      sucessMail({
+        email: student.email,
+        notes: { name: `${student.firstName || ""} ${student.lastName || ""}`.trim() },
+      }),
+      (error) => {
+        if (error) {
+          console.log({ status: false, respMesg: error });
+        } else {
+          console.log({ status: true, respMesg: "Email Sent Successfully" });
+        }
+      }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Payment processed successfully",
+      enrolledCourses: [courseId],
+    });
+  } catch (error) {
+    console.error("Buy Now verify error:", error);
     res
       .status(500)
       .json({ error: "Payment verification failed", details: error.message });
