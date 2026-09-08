@@ -112,7 +112,8 @@ const ATSAnalysisSchema = new mongoose.Schema(
 
     // ── AI Metadata ──────────────────────────────────────────────────────
     aiModel: { type: String, default: "gpt-4o" },       // AI model used
-    tokensUsed: { type: Number },                        // OpenAI tokens consumed
+    tokensUsed: { type: Number },                        // AI tokens consumed
+    neuronsUsed: { type: Number, default: 0 },           // Cloudflare Workers AI neurons billed for this call
     processingTimeMs: { type: Number },                  // Total processing time
 
     // ── Status ───────────────────────────────────────────────────────────
