@@ -2066,7 +2066,14 @@ const getResultsData = async (req, res) => {
       if (findTest?.endDate && new Date() < new Date(findTest.endDate)) {
         allowPermanent = false;
       }
-    } else if (releaseMode === 'Manual' || releaseMode === 'Batch Wise') {
+    } else if (releaseMode === 'Manual') {
+      const allowedStudents = liveConfig?.permanent?.manualPublishStudents || [];
+      if (allowedStudents.includes(data.studentId.toString())) {
+        allowPermanent = true;
+      } else {
+        allowPermanent = false;
+      }
+    } else if (releaseMode === 'Batch Wise') {
       allowPermanent = false;
     } else if (releaseMode === 'Scheduled') {
       if (liveConfig?.permanent?.releaseDate && new Date() < new Date(liveConfig.permanent.releaseDate)) {

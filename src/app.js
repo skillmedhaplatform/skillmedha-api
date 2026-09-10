@@ -31,6 +31,7 @@ const proctoringRouter = require('./modules/proctoring/index');
 // Note: AI service runs as separate microservice on port 7172 - see src/shared/utils/ai.js
 const azureBlobService = require('./shared/utils/azureBlobService');
 const zoomRouter = require('./shared/utils/zoom');
+require('./modules/test/services/resultNotificationCron');
 
 // ─── Dashboard (admin analytics) ──────────────────────────────────────────────
 const dashboardRoutes = require('./modules/admin/services/dashboard/dashboardRoutes');
