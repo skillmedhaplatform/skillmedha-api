@@ -1,7 +1,7 @@
 // services/notificationService.js
 const axios = require("axios");
 const { ObjectId } = require("mongodb");
-const { connectTodb } = require("../db/connection");
+const { connectTodb, getTenantDB } = require("../db/connection");
 
 // ============================================
 // CONFIGURATION
@@ -119,10 +119,6 @@ async function sendNotificationToStudents(tenantId, studentIds, message) {
         } catch (error) {
           failedCount++;
           failedStudents.push(studentId);
-          console.error(
-            `❌ Failed to send notification to student ${studentId}:`,
-            error.message
-          );
         }
       });
 
@@ -208,6 +204,24 @@ function buildJobUpdatedMessage(jobData) {
       action: {
         route: "/student/jobs",
         params: { jobId: jobData._id.toString() },
+      },
+    },
+    priority: "high",
+    timestamp: new Date().toISOString(),
+  };
+}
+
+function buildTestResultPublishedMessage(testData) {
+  return {
+    title: "Test Results Published",
+    body: `The results for the test "${testData.title}" are now available.`,
+    data: {
+      type: NOTIFICATION_TYPES.TEST_RESULT_PUBLISHED,
+      testId: testData._id.toString(),
+      testTitle: testData.title,
+      action: {
+        route: `/student/tests/${testData.title.replace(/ /g, '-')}/result`,
+        params: { testId: testData._id.toString() },
       },
     },
     priority: "high",
@@ -305,6 +319,74 @@ async function notifyJobUpdate(tenantId, tenantDB, jobData, accessCriteria) {
   }
 }
 
+async function notifyResultPublished(tenantId, studentIds, testData) {
+  try {
+    if (!studentIds || studentIds.length === 0) {
+      return { success: false, message: "No students to notify" };
+    }
+
+    // 1) Push Real-time Socket/App Notification
+    const message = buildTestResultPublishedMessage(testData);
+    const result = await sendNotificationToStudents(
+      tenantId,
+      studentIds,
+      message
+    );
+
+    // 2) Create Persistent TPO Notice Board Entry
+    try {
+      const db = await getTenantDB(tenantId);
+      const dbCols = connectTodb(db);
+      const noticeBoardCollection = dbCols.noticeBoard;
+      const studentCollection = dbCols.student;
+
+      if (noticeBoardCollection && studentCollection) {
+        const testIdStr = testData._id.toString();
+        // Check if notice for this test already exists
+        let existingNotice = await noticeBoardCollection.findOne({ testId: testIdStr, type: "TEST_RESULT" });
+        let noticeId;
+
+        if (!existingNotice) {
+          const noticeResult = await noticeBoardCollection.insertOne({
+            title: `Test Results Published: ${testData.title}`,
+            message: `The results for your test "<b>${testData.title}</b>" are now available.`,
+            status: "active",
+            createdAt: Date.now(),
+            targetGroup: { code: "STU_CUSTOM" },
+            source: "system",
+            type: "TEST_RESULT",
+            testId: testIdStr,
+            actionUrl: `/student/tests/${testData.title.replace(/ /g, '-')}/result?testId=${testIdStr}`,
+            actionText: "View Results"
+          });
+          noticeId = noticeResult.insertedId;
+        } else {
+          noticeId = existingNotice._id;
+        }
+
+        // Push noticeId to students
+        const studentObjectIds = studentIds.map(id => new ObjectId(id));
+        await studentCollection.updateMany(
+          { _id: { $in: studentObjectIds } },
+          { $addToSet: { noticeboard: noticeId.toString() } }
+        );
+      }
+    } catch (dbError) {
+      console.error("❌ Error persisting Result Notice Board entry:", dbError);
+    }
+
+    return {
+      success: true,
+      notificationType: NOTIFICATION_TYPES.TEST_RESULT_PUBLISHED,
+      studentsNotified: result.success,
+      ...result,
+    };
+  } catch (error) {
+    console.error("❌ Error in notifyResultPublished:", error);
+    return { success: false, error: error.message };
+  }
+}
+
 // ============================================
 // EXPORTS
 // ============================================
@@ -316,7 +398,9 @@ module.exports = {
   notifyTestAssignment,
   notifyJobPosting,
   notifyJobUpdate,
+  notifyResultPublished,
   buildTestAssignedMessage,
   buildJobPostedMessage,
   buildJobUpdatedMessage,
+  buildTestResultPublishedMessage,
 };

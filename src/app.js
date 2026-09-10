@@ -30,6 +30,7 @@ const proctoringRouter = require('./modules/proctoring/index');
 // Shared service utilities (no re-export changes)
 const azureBlobService = require('./shared/utils/azureBlobService');
 const zoomRouter = require('./shared/utils/zoom');
+require('./modules/test/services/resultNotificationCron');
 
 // ─── Dashboard (admin analytics) ──────────────────────────────────────────────
 const dashboardRoutes = require('./modules/admin/services/dashboard/dashboardRoutes');
