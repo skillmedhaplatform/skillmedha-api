@@ -293,14 +293,28 @@ module.exports.getTopicsBySubject = async (req, res) => {
     // Get number of questions for each topic
     const topicsWithQuestionCount = await Promise.all(
       data.map(async (topic) => {
-        const questionCount = await findInAllTenants(
-          "questions",
-          { topicId: topic._id },
-          "countDocuments"
-        );
+        const tQuery = { topicId: topic._id };
+        const easyQuery = { ...tQuery, difficulty: { $regex: new RegExp("^easy$", "i") } };
+        const mediumQuery = { ...tQuery, difficulty: { $regex: new RegExp("^medium$", "i") } };
+        const hardQuery = { ...tQuery, difficulty: { $regex: new RegExp("^hard$", "i") } };
+
+        const [questionCount, easyCount, mediumCount, hardCount] = await Promise.all([
+          findInAllTenants(
+            "questions",
+            tQuery,
+            "countDocuments"
+          ),
+          findInAllTenants("questions", easyQuery, "countDocuments"),
+          findInAllTenants("questions", mediumQuery, "countDocuments"),
+          findInAllTenants("questions", hardQuery, "countDocuments"),
+        ]);
+        
         return {
           ...topic,
           totalQuestions: questionCount,
+          easyQuestions: easyCount,
+          mediumQuestions: mediumCount,
+          hardQuestions: hardCount,
         };
       })
     );
@@ -381,14 +395,28 @@ module.exports.getSubtopicsByTopic = async (req, res) => {
     // Get number of questions for each subtopic
     const subtopicsWithQuestionCount = await Promise.all(
       data.map(async (subtopic) => {
-        const questionCount = await findInAllTenants(
-          "questions",
-          { subTopicId: subtopic._id },
-          "countDocuments"
-        );
+        const sQuery = { subTopicId: subtopic._id };
+        const easyQuery = { ...sQuery, difficulty: { $regex: new RegExp("^easy$", "i") } };
+        const mediumQuery = { ...sQuery, difficulty: { $regex: new RegExp("^medium$", "i") } };
+        const hardQuery = { ...sQuery, difficulty: { $regex: new RegExp("^hard$", "i") } };
+
+        const [questionCount, easyCount, mediumCount, hardCount] = await Promise.all([
+          findInAllTenants(
+            "questions",
+            sQuery,
+            "countDocuments"
+          ),
+          findInAllTenants("questions", easyQuery, "countDocuments"),
+          findInAllTenants("questions", mediumQuery, "countDocuments"),
+          findInAllTenants("questions", hardQuery, "countDocuments"),
+        ]);
+        
         return {
           ...subtopic,
           totalQuestions: questionCount,
+          easyQuestions: easyCount,
+          mediumQuestions: mediumCount,
+          hardQuestions: hardCount,
         };
       })
     );
