@@ -554,8 +554,26 @@ app.post("/getAllDepartmentsFromOrgs", authenticate, async (req, res) => {
       try {
         const tenantDB = await getTenantDB(currentOrgId);
 
-        const { departments } = connectTodb(tenantDB);
+        const { departments, student } = connectTodb(tenantDB);
+        
         const data = await departments.find({}).toArray();
+
+        // Loop and attach accurate student count
+        for (let dept of data) {
+          try {
+            // Count students where department matches string OR ObjectId
+            const count = await student.countDocuments({
+              $or: [
+                { department: dept._id },
+                { department: dept._id.toString() }
+              ]
+            });
+            // Setting students to a dummy array of length `count` so frontend `.length` logic works seamlessly without refactoring UI
+            dept.students = { length: count };
+          } catch (err) {
+            dept.students = { length: 0 };
+          }
+        }
 
         return {
           orgId: currentOrgId,

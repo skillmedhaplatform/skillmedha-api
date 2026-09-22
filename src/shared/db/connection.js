@@ -308,7 +308,7 @@ function connectTodb(db) {
 
 function getReviewsDB() {
   if (!sharedClient) throw new Error('MongoDB client not connected');
-  return sharedClient.db('reviews');
+  return sharedClient.db(config.mongo.reviewsDbName);
 }
 
 module.exports = {

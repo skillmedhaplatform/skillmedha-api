@@ -109,6 +109,9 @@ app.get('/api/public/stats', async (req, res) => {
   }
 });
 
+const publicRouter = require('./modules/public/index');
+app.use('/api/public', publicRouter);
+
 // ─── Chat widget rate limit (public, unauthenticated) ────────────────────────
 // Must be registered here, before the module routers below (studentRouter,
 // adminRouter, etc). Some of those routers apply auth via an unscoped

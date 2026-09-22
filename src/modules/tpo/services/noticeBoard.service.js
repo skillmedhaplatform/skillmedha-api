@@ -58,15 +58,25 @@ module.exports.createNoticeBoard = async (req, res) => {
     }
 
     // 2) pull body
-    const {
-      targetGroupCode = "STU_ALL",
+    let {
+      targetGroupCode,
       batchYear,
       deptId,
       minCgpa,
       requiredSkills = [],
       emailNotification = false,
+      targetGroup, // from frontend
       ...noticeData
     } = req.body;
+
+    // Support nested targetGroup from frontend
+    if (targetGroup) {
+      targetGroupCode = targetGroupCode || targetGroup.code || "STU_ALL";
+      batchYear = batchYear || targetGroup.batchYear;
+      deptId = deptId || targetGroup.deptId;
+    } else {
+      targetGroupCode = targetGroupCode || "STU_ALL";
+    }
 
     // 3) normalize deptId
     const rawDeptIds = Array.isArray(deptId)
@@ -195,7 +205,7 @@ module.exports.createNoticeBoard = async (req, res) => {
       const ops = matchedStudents.map((stu) => ({
         updateOne: {
           filter: { _id: stu._id },
-          update: { $push: { noticeboard: noticeBoardId } },
+          update: { $push: { noticeboard: insertedId } }, // Push ObjectId
         },
       }));
       await studentsCollection.bulkWrite(ops);
@@ -206,14 +216,14 @@ module.exports.createNoticeBoard = async (req, res) => {
       if (typeof departmentsCollection.updateMany === "function") {
         await departmentsCollection.updateMany(
           { _id: { $in: objectDeptIds } },
-          { $push: { noticeboard: noticeBoardId } }
+          { $push: { noticeboard: insertedId } } // Push ObjectId
         );
       } else {
         await Promise.all(
           objectDeptIds.map((did) =>
             departmentsCollection.updateOne(
               { _id: did },
-              { $push: { noticeboard: noticeBoardId } }
+              { $push: { noticeboard: insertedId } } // Push ObjectId
             )
           )
         );
@@ -353,7 +363,7 @@ module.exports.getAllNoticeBoards = async (req, res) => {
 
     const allQuestions = await noticeBoard
       .find({})
-      .sort({ _id: 1 })
+      .sort({ _id: -1 })
       .skip(skip)
       .limit(limit)
       .toArray();
@@ -385,7 +395,7 @@ module.exports.getNoticeByStatus = async (req, res) => {
     const total = await noticeBoard.countDocuments(filter);
     const notices = await noticeBoard
       .find(filter)
-      .sort({ _id: 1 })
+      .sort({ _id: -1 })
       .skip(skip)
       .limit(limit)
       .toArray();

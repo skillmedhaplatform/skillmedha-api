@@ -22,6 +22,7 @@ const config = {
     resourcesDb: 'skillmedha_resources',
     ksquareDb: 'KSquare',
     archiveDbName: process.env.ARCHIVE_DB_NAME || 'Archive',
+    reviewsDbName: process.env.REVIEWS_DB_NAME || 'reviews',
   },
 
   // Redis
