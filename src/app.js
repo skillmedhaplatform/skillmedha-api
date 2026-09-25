@@ -26,6 +26,7 @@ const adminRouter = require('./modules/admin/index');
 const tpoRouter = require('./modules/tpo/index');
 const testRouter = require('./modules/test/index');
 const proctoringRouter = require('./modules/proctoring/index');
+const publicRouter = require('./modules/public/index');
 
 // Shared service utilities (no re-export changes)
 const azureBlobService = require('./shared/utils/azureBlobService');
@@ -395,6 +396,8 @@ app.post('/updateMeeting/:id', async (req, res) => updateMeeting(req, res));
 app.post('/getRecordedMeeting', async (req, res) => getRecordedMeeting(req, res));
 
 // ─── Role-based module routers ────────────────────────────────────────────────
+app.use('/api/public', publicRouter);
+
 //
 // Student module  → handles: auth, profile, resume, internships (student view),
 //                            assessments (student view), notice board, departments,
