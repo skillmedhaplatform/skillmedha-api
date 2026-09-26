@@ -717,10 +717,10 @@ async function getDashboardStats(req, res) {
       internshipsCollection.countDocuments({ type: 'course' }),
       internshipsCollection.countDocuments({ type: 'internship' }),
       noticeBoardIds.length > 0
-        ? noticeBoard.countDocuments({ _id: { $in: noticeBoardIds } })
+        ? noticeBoard.countDocuments({ _id: { $in: noticeBoardIds }, status: "active" })
         : Promise.resolve(0),
       noticeBoardIds.length > 0
-        ? noticeBoard.find({ _id: { $in: noticeBoardIds } })
+        ? noticeBoard.find({ _id: { $in: noticeBoardIds }, status: "active" })
           .sort({ createdAt: -1 }).limit(5).toArray()
         : Promise.resolve([]),
     ]);

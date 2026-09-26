@@ -5,9 +5,9 @@ const path = require('path');
 
 // runLocally removed for self-hosted Judge0
 
-// Self-hosted Judge0 Configuration
-const JUDGE0_API_URL = 'https://compiler.skillmedha.com/submissions';
-const JUDGE0_API_KEY = process.env.JUDGE0_API_KEY || ''; // Optional: Only if you secured your self-hosted instance
+// Self-hosted Judge0 Configuration removed in favor of RapidAPI Judge0 CE
+const JUDGE0_RAPIDAPI_HOST = process.env.JUDGE0_RAPIDAPI_HOST || 'judge0-ce.p.rapidapi.com';
+const JUDGE0_RAPIDAPI_KEY = process.env.JUDGE0_RAPIDAPI_KEY || '';
 
 const LANGUAGE_MAP = {
   'javascript': 93,
@@ -105,11 +105,13 @@ module.exports.runCode = async (req, res) => {
 
     // 1. Create batch submission
     const createRes = await axios.post(
-      `${JUDGE0_API_URL}/batch?base64_encoded=false`,
+      `https://${JUDGE0_RAPIDAPI_HOST}/submissions/batch?base64_encoded=false`,
       { submissions },
       {
         headers: {
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          'X-RapidAPI-Key': JUDGE0_RAPIDAPI_KEY,
+          'X-RapidAPI-Host': JUDGE0_RAPIDAPI_HOST
         }
       }
     );
@@ -123,7 +125,13 @@ module.exports.runCode = async (req, res) => {
       await new Promise(r => setTimeout(r, 1000)); // wait 1s
       
       const getRes = await axios.get(
-        `${JUDGE0_API_URL}/batch?tokens=${tokens}&base64_encoded=false&fields=stdout,stderr,status_id,compile_output`
+        `https://${JUDGE0_RAPIDAPI_HOST}/submissions/batch?tokens=${tokens}&base64_encoded=false&fields=stdout,stderr,status_id,compile_output`,
+        {
+          headers: {
+            'X-RapidAPI-Key': JUDGE0_RAPIDAPI_KEY,
+            'X-RapidAPI-Host': JUDGE0_RAPIDAPI_HOST
+          }
+        }
       );
       
       results = getRes.data.submissions;
