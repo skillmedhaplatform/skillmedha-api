@@ -57,6 +57,15 @@ router.get('/getAssignedAssessments', mandatory, selectTenantDB, placementsSvc.g
 router.get('/getOneAssessmentFromStudent/:assessmentId', mandatory, selectTenantDB, placementsSvc.getOneAssessmentFromStudent);
 router.get('/getJobAssessmentResultsForStudent/:assessmentId/:studentId', mandatory, selectTenantDB, placementsSvc.getJobAssessmentResultsForStudent);
 
+// ─── Outside jobs (company job boards + Himalayas remote, free, no keys) ─────
+const externalJobsSvc = require('./services/externalJobs.service');
+router.get('/external-jobs/filters', mandatory, externalJobsSvc.getExternalJobFilters);
+router.get('/external-jobs/detail', mandatory, externalJobsSvc.getExternalJobDetail);
+router.get('/external-jobs/suggest', mandatory, externalJobsSvc.suggestExternalJobs);
+router.post('/external-jobs/track', mandatory, selectTenantDB, externalJobsSvc.trackExternalJob);
+router.get('/external-jobs/mine', mandatory, selectTenantDB, externalJobsSvc.getMyExternalJobs);
+router.get('/external-jobs', mandatory, selectTenantDB, externalJobsSvc.searchExternalJobs);
+
 // ─── Practice (student-facing) ────────────────────────────────────────────────
 const compilerCtrl = require('./controllers/compiler.controller');
 router.post('/compiler/run', mandatory, selectTenantDB, compilerCtrl.runCode);
