@@ -476,6 +476,9 @@ async function startServer() {
     await connectSharedDB();
     logger.info('[DB] Shared MongoDB connected');
 
+    // 1.5 Outside jobs: sync company job boards now, then every 3 hours
+    require('./modules/student/services/jobBoards/sync').startJobBoardSync();
+
     // 2. Connect dashboard DB
     try { await connectDashboardDB(); logger.info('[DB] Dashboard DB connected'); }
     catch (e) { logger.warn('[DB] Dashboard DB connect warning:', e.message); }

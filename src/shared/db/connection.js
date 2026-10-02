@@ -138,7 +138,17 @@ function _initGlobalCollections() {
     marqueeNotices:         db.collection('marqueeNotices'),
     chatWidgetUsage:        db_resources.collection('chatWidgetUsage'),
     companyTests:           db_resources.collection('companyTests'),
+    externalJobs:           db_resources.collection('externalJobs'),
   };
+
+  // Outside jobs synced from company job boards (see modules/student/services/jobBoards/sync.js).
+  const externalJobs = db_resources.collection('externalJobs');
+  externalJobs.createIndex({ sourceKey: 1 }, { unique: true, background: true })
+    .catch(err => console.warn('[DB] externalJobs sourceKey index:', err));
+  externalJobs.createIndex({ postedAt: -1 }, { background: true })
+    .catch(err => console.warn('[DB] externalJobs postedAt index:', err));
+  externalJobs.createIndex({ companyKey: 1, lastSeenAt: 1 }, { background: true })
+    .catch(err => console.warn('[DB] externalJobs companyKey index:', err));
 
   return _globalCollections;
 }
