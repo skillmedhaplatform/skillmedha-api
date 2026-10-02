@@ -277,6 +277,13 @@ function detectSkills(title, description, department) {
 
 const SKILL_NAMES = Object.keys(SKILLS);
 
+// Only normal web links (https:// or http://) — never javascript: or data: URLs
+// coming from an outside feed.
+const safeUrl = (u) => {
+  const s = String(u || '').trim();
+  return /^https?:\/\/\S+$/i.test(s) ? s.slice(0, 2000) : null;
+};
+
 const decodeEntities = (s) =>
   String(s || '')
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
@@ -312,4 +319,5 @@ module.exports = {
   SKILL_NAMES,
   stripHtml,
   htmlToReadableText,
+  safeUrl,
 };

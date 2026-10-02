@@ -6,6 +6,7 @@ const { redisClient, isRedisAvailable } = require('../../../shared/cache/redis')
 const {
   CITY_DISPLAY, SKILL_NAMES, normalizeCity, detectExperience, detectJobType, detectSkills, stripHtml,
   htmlToReadableText,
+  safeUrl,
 } = require('./jobBoards/classify');
 const { getLastSync } = require('./jobBoards/sync');
 
@@ -337,7 +338,7 @@ function normalizeHimalayasJob(j) {
     id: j.guid || j.applicationLink,
     provider: 'himalayas',
     company: j.companyName || 'Company',
-    companyLogo: j.companyLogo || null,
+    companyLogo: safeUrl(j.companyLogo),
     title,
     department: null,
     location: places.length ? `Remote · ${places.slice(0, 3).join(', ')}` : 'Remote · Worldwide',
@@ -348,7 +349,7 @@ function normalizeHimalayasJob(j) {
     minExperience: exp.minExperience,
     maxExperience: exp.maxExperience,
     skills: detectSkills(title, `${description} ${(j.categories || []).join(' ').replace(/-/g, ' ')}`, null),
-    applyLink: j.applicationLink,
+    applyLink: safeUrl(j.applicationLink),
     postedAt: j.pubDate ? new Date(j.pubDate * 1000).toISOString() : null,
     salary: hasSalary
       ? { min: j.minSalary || null, max: j.maxSalary || null, currency: j.currency || null, period: j.salaryPeriod || null }
@@ -393,7 +394,7 @@ async function searchHimalayas(f) {
     await setCached(cacheKey, data);
   }
   const jobs = data.jobs
-    .filter((j) => j.applicationLink)
+    .filter((j) => safeUrl(j.applicationLink))
     .map(normalizeHimalayasJob)
     .filter((j) => himalayasMatches(j, f));
   return { jobs, total: data.total };

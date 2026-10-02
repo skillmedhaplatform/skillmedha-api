@@ -11,6 +11,7 @@ const {
   detectSkills,
   stripHtml,
   htmlToReadableText,
+  safeUrl,
 } = require('./classify');
 
 const http = axios.create({
@@ -52,7 +53,7 @@ function buildJob(company, raw) {
     provider: company.provider,
     source: company.source || 'Company careers page',
     company: raw.company || company.name,
-    companyLogo: raw.companyLogo || null,
+    companyLogo: safeUrl(raw.companyLogo),
     title: raw.title,
     department: raw.department || null,
     location: company.provider === 'jobicy' ? raw.locations[0] : displayLocation(raw.locations, cities),
@@ -64,7 +65,7 @@ function buildJob(company, raw) {
     maxExperience: exp.maxExperience,
     skills: detectSkills(raw.title, description, raw.department),
     salary: raw.salary || null,
-    applyLink: raw.applyLink,
+    applyLink: safeUrl(raw.applyLink),
     postedAt: raw.postedAt ? new Date(raw.postedAt) : null,
     description: description.slice(0, 6000), // shown in the job details view
   };
