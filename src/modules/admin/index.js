@@ -91,6 +91,7 @@ router.post('/pracquestions', mandatory, selectTenantDB, practiceSvc.createQuest
 router.post('/bulkUploadPracQuestions', mandatory, selectTenantDB, upload.single('file'), practiceSvc.bulkUploadPracQuestions);
 router.put('/pracquestions/:questionId', mandatory, selectTenantDB, practiceSvc.updatePracQuestion);
 router.delete('/pracquestions/:questionId', mandatory, selectTenantDB, practiceSvc.deletePracQuestion);
+router.post('/bulkDeletePracQuestions', mandatory, selectTenantDB, practiceSvc.bulkDeletePracQuestions);
 
 // ─── Marquee management (Admin creates/edits marquee notices) ─────────────────
 router.get('/marquee', marqueeSvc.getMarqueeNotices);
