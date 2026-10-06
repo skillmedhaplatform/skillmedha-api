@@ -3,7 +3,7 @@ const { json, urlencoded } = require("express");
 const { ObjectId } = require("mongodb");
 const { connectTodb, getGlobalCollections } = require("../../../shared/db/connection");
 const { getTenantDB } = require("../../../shared/db/connection");
-const { archiveAndDeleteOne } = require("../../../shared/utils/archive.service");
+const { archiveAndDeleteOne, archiveAndDeleteMany } = require("../../../shared/utils/archive.service");
 const XLSX = require("xlsx");
 const fs = require("fs").promises;
 
@@ -845,6 +845,36 @@ module.exports.deletePracQuestion = async (req, res) => {
 
     if (archiveResult.deletedCount === 0) throw new Error("Question not found");
     res.status(200).json({ msg: "Question deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ err: error.message });
+  }
+};
+
+module.exports.bulkDeletePracQuestions = async (req, res) => {
+  const { questions } = connectTodb(req.tenantDB);
+  try {
+    const { questionIds } = req.body;
+    if (!Array.isArray(questionIds) || questionIds.length === 0) {
+      return res.status(400).json({ err: "questionIds array is required" });
+    }
+
+    const objIds = questionIds.map((id) =>
+      ObjectId.isValid(id) ? new ObjectId(id) : id
+    );
+
+    const archiveResult = await archiveAndDeleteMany(
+      questions,
+      { _id: { $in: objIds } },
+      {
+        deletedBy: req.userID || null,
+        reason: req.body?.reason || "Bulk delete by admin",
+      }
+    );
+
+    res.status(200).json({
+      msg: `${archiveResult.deletedCount || 0} questions deleted successfully`,
+      deletedCount: archiveResult.deletedCount || 0,
+    });
   } catch (error) {
     res.status(500).json({ err: error.message });
   }
