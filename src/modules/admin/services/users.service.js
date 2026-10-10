@@ -8,6 +8,7 @@ const {
   mainDBusers,
   organisation,
   aiUsageCollection,
+  AdminUser,
 } = require("../../../shared/db/connection").getGlobalCollections();
 const { getTenantDB } = require("../../../shared/db/connection");
 const { archiveAndDeleteOne, archiveTenantDatabase } = require("../../../shared/utils/archive.service");
@@ -18,6 +19,8 @@ const { ObjectId } = require("mongodb");
 const mongoDB = require("mongodb");
 const nodemailer = require("nodemailer");
 const { connectTodb } = require("../../../shared/db/connection");
+const { generateForgotPasswordHtml } = require("../../../shared/utils/emailTemplates");
+const config = require("../../../config");
 const {
   getJobsByOrgPaginated,
   getUsersByOrgPaginated,
@@ -93,8 +96,12 @@ app.post("/login", async (req, res) => {
     const findUser = await mainDBusers.findOne({ email: email.toLowerCase() });
 
     if (!findUser?._id) throw new Error("User not registered");
-    if (!findUser?.active)
+    if (!findUser?.active) {
+      if (findUser?.verificationToken) {
+        throw new Error("Please verify your email address before logging in.");
+      }
       throw new Error("Account Deactivated Please contact site administrator");
+    }
 
     const compare = await bcrypt.compare(password, findUser.password);
     if (!compare) throw new Error("password incorrect");
@@ -793,9 +800,13 @@ app.post("/forgotStudentPassword", async (req, res) => {
   }
 
   try {
-    const userDetails = await mainDBusers.findOne({
-      $and: [{ email }, { type }],
-    });
+    // Search mainDBusers first (Students, TPOs, Companies)
+    let userDetails = await mainDBusers.findOne({ email: email.toLowerCase() });
+    
+    // If not found, search AdminUser (for Admin accounts)
+    if (!userDetails) {
+      userDetails = await AdminUser.findOne({ email: email.toLowerCase() });
+    }
     if (!userDetails)
       return res.status(404).json({ message: "User not found" });
 
@@ -808,10 +819,20 @@ app.post("/forgotStudentPassword", async (req, res) => {
     );
 
     const resetUrl = `${getPublicBaseUrl(req)}/reset-password?token=${token}`;
+    const portalUrl = config.urls ? config.urls.studentPortal : getPublicBaseUrl(req);
+    const html = generateForgotPasswordHtml(resetUrl, portalUrl);
 
-    const message = `You requested a password reset. Click the link below:\n\n${resetUrl}`;
-
-    await sendMail(userDetails.email, "Password Reset Request", message);
+    await transporter.sendMail({
+      from: process.env.support_mail,
+      to: userDetails.email,
+      subject: "Password Reset Request - Skill Medha",
+      html,
+      attachments: [{
+        filename: 'skillmedha-logo.png',
+        path: require('path').join(__dirname, '../../../shared/assets/skillmedha-logo.png'),
+        cid: 'logo'
+      }]
+    });
 
     res.json({ message: "Password reset email sent" });
   } catch (error) {
@@ -820,47 +841,163 @@ app.post("/forgotStudentPassword", async (req, res) => {
   }
 });
 
+const renderResetPage = (req, type, data = {}) => {
+  const portalUrl = config.urls ? config.urls.studentPortal : getPublicBaseUrl(req);
+  const logoUrl = `${portalUrl}/skillmedha-logo.png`;
+  
+  let content = '';
+  
+  if (type === 'form') {
+    content = `
+      <img src="${logoUrl}" alt="SkillMedha Logo" class="logo" onerror="this.src='https://skillmedha.com/skillmedha-logo.png'">
+      <h2>Reset Your Password</h2>
+      <p>Please enter your new password below to securely regain access to your account.</p>
+      <form method="POST" action="/reset-password?token=${data.token}">
+        <div class="form-group">
+          <label for="newPassword">New Password</label>
+          <div class="input-wrapper">
+            <input type="password" id="newPassword" name="newPassword" class="form-control" placeholder="••••••••" required>
+            <button type="button" class="toggle-password" onclick="toggleVisibility('newPassword', this)">
+              <svg class="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            </button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="confirmPassword">Confirm Password</label>
+          <div class="input-wrapper">
+            <input type="password" id="confirmPassword" name="confirmPassword" class="form-control" placeholder="••••••••" required>
+            <button type="button" class="toggle-password" onclick="toggleVisibility('confirmPassword', this)">
+              <svg class="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            </button>
+          </div>
+        </div>
+        <button type="submit" class="btn">Update Password</button>
+      </form>
+    `;
+  } else if (type === 'error') {
+    content = `
+      <div class="icon-container icon-error">✕</div>
+      <h2>${data.title}</h2>
+      <p>${data.message}</p>
+      ${data.showBack ? `<a href="/reset-password?token=${data.token}" class="action-link">Try Again</a>` : ''}
+    `;
+  } else if (type === 'success') {
+    content = `
+      <div class="icon-container icon-success">✓</div>
+      <h2>${data.title}</h2>
+      <p>${data.message}</p>
+      <a href="${data.loginUrl}" class="btn" style="display:inline-block; text-decoration:none; margin-top:20px;">Go to Login</a>
+      <meta http-equiv="refresh" content="1;url=${data.loginUrl}">
+      <script>setTimeout(function() { window.location.href = "${data.loginUrl}"; }, 1500);</script>
+    `;
+  }
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reset Password - SkillMedha</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; font-family: 'Inter', sans-serif; }
+    body { 
+      margin: 0; padding: 0; 
+      background: linear-gradient(135deg, #f0f7ff 0%, #ffffff 100%);
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      color: #1a202c;
+    }
+    .container {
+      background: #ffffff; width: 100%; max-width: 440px; margin: 20px;
+      border-radius: 16px; padding: 40px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.05), 0 20px 48px rgba(0,0,0,0.05);
+      text-align: center;
+      position: relative; overflow: hidden;
+    }
+    .container::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 6px;
+      background: linear-gradient(90deg, #1b539c, #2a73c9);
+    }
+    .logo { width: 56px; height: 56px; margin-bottom: 24px; border-radius: 12px; }
+    h2 { margin: 0 0 12px; font-size: 24px; font-weight: 800; color: #1a202c; letter-spacing: -0.5px; }
+    p { margin: 0 0 32px; font-size: 14px; color: #718096; line-height: 1.5; }
+    
+    .form-group { text-align: left; margin-bottom: 20px; }
+    .form-group label { display: block; font-size: 13px; font-weight: 600; color: #4a5568; margin-bottom: 8px; }
+    .input-wrapper { position: relative; display: flex; align-items: center; }
+    .form-control { 
+      width: 100%; padding: 14px 44px 14px 16px; font-size: 14px;
+      border: 1px solid #e2e8f0; border-radius: 10px;
+      background-color: #f8fafc; color: #1a202c;
+      transition: all 0.2s ease;
+    }
+    .form-control:focus { outline: none; border-color: #2a73c9; background-color: #ffffff; box-shadow: 0 0 0 3px rgba(42, 115, 201, 0.15); }
+    .toggle-password {
+      position: absolute; right: 12px; background: none; border: none; padding: 4px;
+      display: flex; align-items: center; justify-content: center; cursor: pointer; color: #a0aec0;
+    }
+    .toggle-password:hover { color: #4a5568; }
+    .eye-icon { width: 18px; height: 18px; }
+    
+    .btn {
+      width: 100%; padding: 14px; margin-top: 10px;
+      background: linear-gradient(135deg, #1b539c, #2a73c9);
+      color: #ffffff; border: none; border-radius: 10px;
+      font-size: 15px; font-weight: 700; cursor: pointer;
+      transition: all 0.2s ease; box-shadow: 0 4px 12px rgba(42, 115, 201, 0.25);
+    }
+    .btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(42, 115, 201, 0.35); }
+    .btn:active { transform: translateY(1px); }
+    
+    .icon-container { width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; font-size: 32px; font-weight: bold; }
+    .icon-error { background: #fff5f5; color: #f56565; border: 2px solid #fed7d7; }
+    .icon-success { background: #f0fff4; color: #48bb78; border: 2px solid #c6f6d5; }
+    .action-link { display: inline-block; margin-top: 10px; color: #2a73c9; text-decoration: none; font-weight: 600; font-size: 14px; }
+    .action-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    ${content}
+  </div>
+  <script>
+    function toggleVisibility(inputId, btn) {
+      const input = document.getElementById(inputId);
+      const isPassword = input.type === 'password';
+      input.type = isPassword ? 'text' : 'password';
+      btn.innerHTML = isPassword 
+        ? '<svg class="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>'
+        : '<svg class="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
+    }
+  </script>
+</body>
+</html>`;
+};
+
 // Reset Password - Render HTML Form (GET)
 app.get("/reset-password", async (req, res) => {
   const { token } = req.query;
 
   if (!token) {
-    return res.send(`
-      <h1>Invalid or missing token</h1>
-      <p>The password reset link is invalid or has expired.</p>
-    `);
+    return res.send(renderResetPage(req, 'error', { title: 'Invalid Link', message: 'The password reset link is invalid or has expired.' }));
   }
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    const userDetails = await mainDBusers.findOne({
-      _id: new ObjectId(decoded.id),
-    });
+    let userDetails = await mainDBusers.findOne({ _id: new ObjectId(decoded.id) });
+    if (!userDetails) {
+      userDetails = await AdminUser.findOne({ _id: new ObjectId(decoded.id) });
+    }
 
     if (!userDetails) {
-      return res.send(`
-        <h1>Invalid or expired token</h1>
-        <p>The password reset link is invalid or has expired.</p>
-      `);
+      return res.send(renderResetPage(req, 'error', { title: 'Invalid Link', message: 'The password reset link is invalid or has expired.' }));
     }
 
     // Render HTML Form
-    res.send(`
-      <h2>Reset Your Password</h2>
-      <form method="POST" action="/reset-password?token=${token}" style="max-width: 400px; margin: auto;">
-        <label>New Password:</label><br>
-        <input type="password" name="newPassword" required style="width: 100%; padding: 8px; margin: 8px 0;"><br>
-        <label>Confirm Password:</label><br>
-        <input type="password" name="confirmPassword" required style="width: 100%; padding: 8px; margin: 8px 0;"><br>
-        <button type="submit" style="margin-top: 10px; padding: 10px 20px;">Change Password</button>
-      </form>
-    `);
+    res.send(renderResetPage(req, 'form', { token }));
   } catch (error) {
-    res.send(`
-      <h1>Invalid or expired token</h1>
-      <p>The password reset link is invalid or has expired.</p>
-    `);
+    res.send(renderResetPage(req, 'error', { title: 'Link Expired', message: 'The password reset link has expired. Please request a new one.' }));
   }
 });
 
@@ -870,54 +1007,42 @@ app.post("/reset-password", async (req, res) => {
   const { newPassword, confirmPassword } = req.body;
 
   if (!token) {
-    return res.send(`
-      <h1>Invalid or missing token</h1>
-      <p>The password reset link is invalid or has expired.</p>
-    `);
+    return res.send(renderResetPage(req, 'error', { title: 'Invalid Link', message: 'The password reset link is invalid or has expired.' }));
   }
 
   if (newPassword !== confirmPassword) {
-    return res.send(`
-      <h1>Passwords do not match</h1>
-      <p>Please try again.</p>
-      <a href="/reset-password?token=${token}">Go back</a>
-    `);
+    return res.send(renderResetPage(req, 'error', { title: 'Passwords mismatch', message: 'The passwords you entered do not match. Please try again.', showBack: true, token }));
   }
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    const student = await mainDBusers.findOne({
-      _id: new ObjectId(decoded.id),
-    });
+    let userObj = await mainDBusers.findOne({ _id: new ObjectId(decoded.id) });
+    let collectionToUpdate = mainDBusers;
+    
+    if (!userObj) {
+      userObj = await AdminUser.findOne({ _id: new ObjectId(decoded.id) });
+      collectionToUpdate = AdminUser;
+    }
 
-    if (!student) {
-      return res.send(`
-        <h1>Invalid or expired token</h1>
-        <p>The password reset link is invalid or has expired.</p>
-      `);
+    if (!userObj) {
+      return res.send(renderResetPage(req, 'error', { title: 'Invalid Link', message: 'The password reset link is invalid or has expired.' }));
     }
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    await mainDBusers.updateOne(
+    await collectionToUpdate.updateOne(
       { _id: new ObjectId(decoded.id) },
-      {
-        $set: { password: hashedPassword },
-      }
+      { $set: { password: hashedPassword } }
     );
-    const loginPage = `${process.env.STUDENT_PORTAL_URL}/login`;
-    res.send(`
-  <h1>Password Updated Successfully</h1>
-  <p>You can now log in with your new password.</p>
-  <meta http-equiv="refresh" content="3;url=${loginPage}">
-  <p>Redirecting to <a href="${loginPage}">login page</a>...</p>
-`);
+    
+    const portalUrl = config.urls ? config.urls.studentPortal : getPublicBaseUrl(req);
+    // If it's an admin, we redirect them to /admin/login. Otherwise /login
+    const loginPage = collectionToUpdate === AdminUser ? `${portalUrl}/admin/login` : `${portalUrl}/login`;
+    
+    res.send(renderResetPage(req, 'success', { title: 'Password Updated', message: 'Your password has been successfully reset. You will be redirected to the login page momentarily.', loginUrl: loginPage }));
   } catch (error) {
-    res.send(`
-      <h1>Invalid or expired token</h1>
-      <p>The password reset link is invalid or has expired.</p>
-    `);
+    res.send(renderResetPage(req, 'error', { title: 'Link Expired', message: 'The password reset link has expired. Please request a new one.' }));
   }
 });
 

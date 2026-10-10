@@ -74,6 +74,7 @@ module.exports.createDepartment = async (req, res) => {
 };
 
 module.exports.getAllDepartments = async (req, res) => {
+  console.log("getAllDepartments called with tenantDB:", req.tenantDB);
   const { departments } = connectTodb(req.tenantDB);
   if (!req.tenantDB)
     return res.status(500).json({ error: "No tenant DB available" });
