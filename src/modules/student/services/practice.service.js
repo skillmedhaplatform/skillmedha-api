@@ -131,6 +131,10 @@ const findInAllTenants = async (
   }
 };
 
+// Shared with the admin practice-sets service, which counts and resolves
+// questions/topics across the same tenant databases.
+module.exports.findInAllTenants = findInAllTenants;
+
 module.exports.createSubject = async (req, res) => {
   const { subjects } = connectTodb(req.tenantDB);
   try {

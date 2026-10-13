@@ -70,6 +70,11 @@ router.post('/startPractice', mandatory, selectTenantDB, practiceSvc.startPracti
 router.post('/savePracResults/:pracId', mandatory, selectTenantDB, practiceSvc.savePracResults);
 router.get('/getStudentPracResults/:userId', mandatory, selectTenantDB, practiceSvc.getStudentPracResults);
 
+// ─── Practice Sets & Bundles (student catalog + gated start) ─────────────────
+const practiceCatalogSvc = require('./services/practiceCatalog.service');
+router.get('/practice-catalog', mandatory, practiceCatalogSvc.getPracticeCatalog);
+router.post('/practice-sets/:id/start', mandatory, selectTenantDB, practiceCatalogSvc.startPracticeSet);
+
 const companyTestsSvc = require('../admin/services/companyTests.service');
 router.get('/company-tests', mandatory, selectTenantDB, companyTestsSvc.getCompanyTests);
 
