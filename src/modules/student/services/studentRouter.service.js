@@ -22,6 +22,7 @@ const CryptoJS = require('crypto-js');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
+const { generateVerificationHtml } = require('../../../shared/utils/emailTemplates');
 
 // ─── Shared imports (new paths) ───────────────────────────────────────────────
 const { mandatory: authenticate } = require('../../../shared/middleware/auth.middleware');
@@ -63,13 +64,19 @@ async function generateEnrollmentId(date = new Date(), tenantDB) {
 }
 
 function sendVerificationEmail({ email, name, verificationToken, orgId }, redirectUrl) {
-  const link = `${config.urls.studentVerify}/verify?token=${verificationToken}&orgId=${orgId}`;
-  const html = `<!DOCTYPE html><html><body><p>Hi ${name}, click <a href="${link}">here</a> to verify your email.</p></body></html>`;
+  const link = `${config.urls.studentVerify}/verify?token=${encodeURIComponent(verificationToken)}&orgId=${orgId}`;
+  const portalUrl = config.urls.studentPortal;
+  const html = generateVerificationHtml(name, link, portalUrl);
   return transporter.sendMail({
     from: config.email.noreplyMail,
     to: email,
     subject: 'Verify Your Email – Skill Medha',
     html,
+    attachments: [{
+      filename: 'skillmedha-logo.png',
+      path: require('path').join(__dirname, '../../../shared/assets/skillmedha-logo.png'),
+      cid: 'logo'
+    }]
   });
 }
 
@@ -169,7 +176,7 @@ router.post('/createStudentAccount', authenticate, selectTenantDB, async (req, r
 router.post('/registerStudent', async (req, res) => {
   const { mainDBusers } = getCollections();
   try {
-    const { email, password, firstName, lastName, phone, orgId: bodyOrgId } = req.body;
+    const { email, password, firstName, lastName, phone, orgId: bodyOrgId, departmentId } = req.body;
     let orgIdToUse = req.orgId || bodyOrgId;
 
     // Map 'skill' alias to actual special organization ID
@@ -177,15 +184,106 @@ router.post('/registerStudent', async (req, res) => {
       orgIdToUse = "skill_68e9fa374c2e0b6f153a3135";
     }
 
+    if (orgIdToUse) {
+      const tenantDB = await getTenantDB(orgIdToUse);
+      const { student } = connectTodb(tenantDB);
+      const existingTenantUser = await student.findOne({ email: email.toLowerCase() });
+      if (existingTenantUser) {
+        throw new Error('Account already exists. Please try to log in.');
+      }
+    }
+
     const salt = await bcrypt.genSalt();
     const hash = await bcrypt.hash(password, salt);
     const verificationToken = CryptoJS.AES.encrypt(
-      JSON.stringify({ email, orgId: orgIdToUse }), secretToken
+      JSON.stringify({ email: email.toLowerCase(), orgId: orgIdToUse, departmentId }), secretToken
     ).toString();
-    await mainDBusers.insertOne({
-      email, firstName, lastName, phone, password: hash,
-      type: 'student', active: false, orgId: orgIdToUse, verificationToken,
-    });
+
+    let globalId;
+    const existingUser = await mainDBusers.findOne({ email: email.toLowerCase() });
+    
+    if (existingUser) {
+      globalId = existingUser._id.toString();
+      await mainDBusers.updateOne(
+        { _id: existingUser._id },
+        { $set: { firstName, lastName, phone, password: hash, orgId: orgIdToUse, verificationToken, active: false } }
+      );
+    } else {
+      const globalResult = await mainDBusers.insertOne({
+        email: email.toLowerCase(), firstName, lastName, phone, password: hash,
+        type: 'student', active: false, orgId: orgIdToUse, verificationToken,
+      });
+      globalId = globalResult.insertedId.toString();
+    }
+
+    if (orgIdToUse) {
+      const tenantDB = await getTenantDB(orgIdToUse);
+      const { student, departments } = connectTodb(tenantDB);
+      const enrollmentId = await generateEnrollmentId(new Date(), tenantDB);
+      
+      const result = await student.insertOne({
+        email: email.toLowerCase(),
+        firstName,
+        lastName,
+        phone,
+        password: hash,
+        type: 'student',
+        enrollementId: enrollmentId,
+        globalId: globalId,
+        active: false,
+        verified: false,
+        createdAt: new Date().toLocaleString()
+      });
+
+      let finalDeptId = departmentId;
+
+      // Auto-assign website signups to a department for a specific org (max 500 per dept)
+      if (orgIdToUse === process.env.WEBSITE_SIGNUP_ORG_ID && process.env.WEBSITE_SIGNUP_BASE_DEPT_ID) {
+        let baseDept = null;
+        try {
+          baseDept = await departments.findOne({ _id: new mongoDB.ObjectId(process.env.WEBSITE_SIGNUP_BASE_DEPT_ID) });
+        } catch (err) {
+          console.error("Invalid WEBSITE_SIGNUP_BASE_DEPT_ID", err);
+        }
+        if (baseDept) {
+          const escapedName = (baseDept.title || '').replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+          const deptNameRegex = new RegExp(`^${escapedName}( - Part \\\\d+)?$`);
+          const allRelatedDepts = await departments.find({ title: deptNameRegex }).toArray();
+          
+          const availableDept = allRelatedDepts.find(d => (d.students || []).length < 500);
+          
+          if (availableDept) {
+            finalDeptId = availableDept._id.toString();
+          } else {
+            const nextPartNumber = allRelatedDepts.length + 1;
+            const newDeptResult = await departments.insertOne({
+              title: `${baseDept.title} - Part ${nextPartNumber}`,
+              hodName: baseDept.hodName || 'Website',
+              students: [],
+              organizationId: orgIdToUse,
+              status: 'active',
+              createdAt: new Date().getTime()
+            });
+            finalDeptId = newDeptResult.insertedId.toString();
+          }
+        }
+      }
+
+      if (finalDeptId && finalDeptId !== "null" && finalDeptId !== "undefined" && finalDeptId !== "") {
+        try {
+          await departments.updateOne(
+            { _id: new mongoDB.ObjectId(finalDeptId) },
+            { $push: { students: result.insertedId.toString() } }
+          );
+          await student.updateOne(
+            { _id: result.insertedId },
+            { $set: { department: finalDeptId } }
+          );
+        } catch (err) {
+          console.error("Failed to update department students:", err);
+        }
+      }
+    }
     await sendVerificationEmail({ email, name: firstName, verificationToken, orgId: orgIdToUse });
     res.status(200).json({ success: true, message: 'Verification email sent' });
   } catch (error) { res.status(500).json({ err: error.message }); }
@@ -195,21 +293,50 @@ router.post('/registerStudent', async (req, res) => {
 router.get('/verify', async (req, res) => {
   const { mainDBusers } = getCollections();
   try {
-    const { token, orgId } = req.query;
+    let { token, orgId } = req.query;
+    if (token) token = token.replace(/ /g, '+');
     const bytes = CryptoJS.AES.decrypt(token, secretToken);
     const decoded = JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
     if (!decoded.email) throw new Error('Invalid token');
 
     await mainDBusers.updateOne({ email: decoded.email }, { $set: { active: true, verificationToken: null } });
+    const globalUser = await mainDBusers.findOne({ email: decoded.email });
 
     if (decoded.orgId || orgId) {
       const targetOrgId = decoded.orgId || orgId;
       const tenantDB = await getTenantDB(targetOrgId);
       const { student } = connectTodb(tenantDB);
-      await student.updateOne({ email: decoded.email }, { $set: { verified: true, active: true } });
+      
+      const existingStudent = await student.findOne({ email: decoded.email });
+      if (existingStudent) {
+        await student.updateOne({ email: decoded.email }, { $set: { verified: true, active: true } });
+      } else if (globalUser) {
+        const enrollmentId = await generateEnrollmentId(new Date(), tenantDB);
+        const result = await student.insertOne({
+          email: globalUser.email,
+          firstName: globalUser.firstName,
+          lastName: globalUser.lastName,
+          phone: globalUser.phone,
+          password: globalUser.password,
+          type: 'student',
+          enrollementId: enrollmentId,
+          globalId: globalUser._id.toString(),
+          active: true,
+          verified: true,
+          createdAt: new Date().toLocaleString()
+        });
+
+        if (decoded.departmentId) {
+          const { departments } = connectTodb(tenantDB);
+          await departments.updateOne(
+            { _id: new mongoDB.ObjectId(decoded.departmentId) },
+            { $push: { students: result.insertedId.toString() } }
+          );
+        }
+      }
     }
 
-    res.status(200).json({ success: true, message: 'Email verified successfully' });
+    res.redirect(config.urls.studentPortal + '/login');
   } catch (error) { res.status(500).json({ err: error.message }); }
 });
 

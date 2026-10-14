@@ -81,7 +81,7 @@ async function getAllStudents(req, res) {
 
 async function getStudentCreds(req, res) {
   const { student, progress } = connectTodb(req.tenantDB);
-  const { mainDBusers } = getGlobalCollections();
+  const { mainDBusers, organisation } = getGlobalCollections();
   if (!req.tenantDB) return res.status(500).json({ error: 'No tenant DB available' });
   try {
     const email = req.query.email || req.email;
@@ -165,6 +165,21 @@ async function getStudentCreds(req, res) {
     }
 
     const responseData = findStudent || globalUser;
+    let orgDetails = req.orgId
+      ? await organisation.findOne({ orgId: req.orgId })
+      : null;
+
+    if (!orgDetails && req.orgId) {
+      try {
+        orgDetails = await organisation.findOne({
+          _id: new mongoDB.ObjectId(req.orgId.split("_").pop()),
+        });
+      } catch (error) {
+        if (error.name !== "BSONError") {
+          throw error;
+        }
+      }
+    }
 
     res.status(200).json({
       data: {
@@ -173,7 +188,7 @@ async function getStudentCreds(req, res) {
         loginCount: globalUser ? globalUser.loginCount : undefined,
         verified: globalUser ? globalUser.active : false,
         active: globalUser ? globalUser.active : false,
-        orgDetails: { orgId: req.orgId }
+        orgDetails: orgDetails || { orgId: req.orgId },
       }
     });
   } catch (error) {
