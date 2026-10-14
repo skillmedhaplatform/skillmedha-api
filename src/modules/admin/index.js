@@ -93,6 +93,20 @@ router.put('/pracquestions/:questionId', mandatory, selectTenantDB, practiceSvc.
 router.delete('/pracquestions/:questionId', mandatory, selectTenantDB, practiceSvc.deletePracQuestion);
 router.post('/bulkDeletePracQuestions', mandatory, selectTenantDB, practiceSvc.bulkDeletePracQuestions);
 
+// ─── Practice Sets & Bundles (Admin configures sellable practice cards) ──────
+const practiceSetsSvc = require('./services/practiceSets.service');
+router.post('/practice-sets/question-count', mandatory, selectTenantDB, practiceSetsSvc.getQuestionCountForTopics);
+router.get('/practice-sets', mandatory, selectTenantDB, practiceSetsSvc.getPracticeSets);
+router.get('/practice-sets/:id', mandatory, selectTenantDB, practiceSetsSvc.getPracticeSet);
+router.post('/practice-sets', mandatory, selectTenantDB, practiceSetsSvc.createPracticeSet);
+router.put('/practice-sets/:id', mandatory, selectTenantDB, practiceSetsSvc.updatePracticeSet);
+router.delete('/practice-sets/:id', mandatory, selectTenantDB, practiceSetsSvc.deletePracticeSet);
+router.get('/practice-bundles', mandatory, selectTenantDB, practiceSetsSvc.getPracticeBundles);
+router.get('/practice-bundles/:id', mandatory, selectTenantDB, practiceSetsSvc.getPracticeBundle);
+router.post('/practice-bundles', mandatory, selectTenantDB, practiceSetsSvc.createPracticeBundle);
+router.put('/practice-bundles/:id', mandatory, selectTenantDB, practiceSetsSvc.updatePracticeBundle);
+router.delete('/practice-bundles/:id', mandatory, selectTenantDB, practiceSetsSvc.deletePracticeBundle);
+
 // ─── Marquee management (Admin creates/edits marquee notices) ─────────────────
 router.get('/marquee', marqueeSvc.getMarqueeNotices);
 router.post('/marquee', mandatory, upload.single('thumbnail'), marqueeSvc.createMarqueeNotice);

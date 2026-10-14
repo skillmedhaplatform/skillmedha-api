@@ -306,6 +306,8 @@ function connectTodb(db) {
       subtopics:               db.collection('subtopics'),
       practiceQuestions:       db.collection('practiceQuestions'),
       pracSessions:            db.collection('PracticeSessions'),
+      practiceSets:            db.collection('practiceSets'),
+      practiceBundles:         db.collection('practiceBundles'),
       mockTestAttempts:        db.collection('mockTestAttempts'),
       cart:                    db.collection('cart'),
       wishlist:                db.collection('wishlist'),
