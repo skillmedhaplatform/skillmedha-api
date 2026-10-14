@@ -110,7 +110,6 @@ app.get('/api/public/stats', async (req, res) => {
   }
 });
 
-const publicRouter = require('./modules/public/index');
 app.use('/api/public', publicRouter);
 
 // ─── Chat widget rate limit (public, unauthenticated) ────────────────────────
@@ -399,7 +398,6 @@ app.post('/updateMeeting/:id', async (req, res) => updateMeeting(req, res));
 app.post('/getRecordedMeeting', async (req, res) => getRecordedMeeting(req, res));
 
 // ─── Role-based module routers ────────────────────────────────────────────────
-app.use('/api/public', publicRouter);
 
 //
 // Student module  → handles: auth, profile, resume, internships (student view),
