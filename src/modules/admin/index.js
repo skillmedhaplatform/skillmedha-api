@@ -95,6 +95,7 @@ router.delete('/pracquestions/:questionId', mandatory, selectTenantDB, practiceS
 // ─── Practice Sets & Bundles (Admin configures sellable practice cards) ──────
 const practiceSetsSvc = require('./services/practiceSets.service');
 router.post('/practice-sets/question-count', mandatory, selectTenantDB, practiceSetsSvc.getQuestionCountForTopics);
+router.get('/practice-sets/company-sources', mandatory, selectTenantDB, practiceSetsSvc.getCompanySources);
 router.get('/practice-sets', mandatory, selectTenantDB, practiceSetsSvc.getPracticeSets);
 router.get('/practice-sets/:id', mandatory, selectTenantDB, practiceSetsSvc.getPracticeSet);
 router.post('/practice-sets', mandatory, selectTenantDB, practiceSetsSvc.createPracticeSet);

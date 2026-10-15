@@ -1,5 +1,5 @@
 const { ObjectId } = require("mongodb");
-const { connectTodb } = require("../../../shared/db/connection");
+const { connectTodb, getGlobalCollections } = require("../../../shared/db/connection");
 const { archiveAndDeleteOne } = require("../../../shared/utils/archive.service");
 const { findInAllTenants } = require("../../student/services/practice.service");
 
@@ -10,7 +10,8 @@ const { findInAllTenants } = require("../../student/services/practice.service");
 
 const PLANS = ["free", "premium"];
 const LEVELS = ["beginner", "intermediate", "advanced", "pro"];
-const CATEGORIES = ["nontechnical", "technical", "coding"];
+// "company" sets draw from the company-wise tests (Admin → Practice → Company-wise).
+const CATEGORIES = ["nontechnical", "technical", "coding", "company"];
 const STATUSES = ["draft", "published"];
 // Same values the question editor stores on each question; "mixed" means
 // questions of every difficulty.
@@ -30,10 +31,15 @@ const CODING_TYPE = "Coding Question";
 //   { subjectId }                       → every question in the subject
 //   { subjectId, topicId }              → every question in the topic (incl. its subtopics)
 //   { subjectId, topicId, subTopicId }  → only that subtopic
-// Coding subjects have no topics at all, so "whole subject" is the only option there.
+//   { subjectId, section }              → one section of a company test
+// Company-test questions use the company test's id as their subjectId and a
+// sectionName ("Aptitude", "Reasoning", …), so a whole company test is simply
+// { subjectId: companyTestId }. Coding subjects have no topics at all, so
+// "whole subject" is the only option there.
 const sourceClause = (sel) => {
   if (sel.subTopicId) return { subTopicId: idMatch(sel.subTopicId) };
   if (sel.topicId) return { topicId: idMatch(sel.topicId) };
+  if (sel.section) return { subjectId: idMatch(sel.subjectId), sectionName: sel.section };
   return { subjectId: idMatch(sel.subjectId) };
 };
 
@@ -62,7 +68,7 @@ const countQuestions = (selections, options) =>
     : 0;
 
 const selectionKey = (sel) =>
-  [sel.subjectId, sel.topicId, sel.subTopicId].map((id) => (id ? id.toString() : "")).join("|");
+  [sel.subjectId, sel.topicId, sel.subTopicId, sel.section].map((id) => (id ? id.toString() : "")).join("|");
 
 // Validates raw selections from the client, drops duplicates, and drops any
 // selection already covered by a wider one (a topic inside a chosen subject,
@@ -73,21 +79,26 @@ const normaliseSelections = (raw) => {
     const subjectId = toObjectId(item?.subjectId);
     const topicId = item?.topicId ? toObjectId(item.topicId) : null;
     const subTopicId = item?.subTopicId ? toObjectId(item.subTopicId) : null;
+    const section = typeof item?.section === "string" ? item.section.trim() : "";
     if (!subjectId || (item?.topicId && !topicId) || (item?.subTopicId && !subTopicId)) {
       return { err: "One of the selected subjects, topics or subtopics is invalid" };
     }
     if (subTopicId && !topicId) return { err: "A subtopic must be selected together with its topic" };
+    if (section && topicId) return { err: "A company section can't be combined with a topic" };
     const sel = { subjectId };
     if (topicId) sel.topicId = topicId;
     if (subTopicId) sel.subTopicId = subTopicId;
+    if (section) sel.section = section;
     list.push(sel);
   }
 
-  const wholeSubjects = new Set(list.filter((s) => !s.topicId).map((s) => s.subjectId.toString()));
+  const wholeSubjects = new Set(
+    list.filter((s) => !s.topicId && !s.section).map((s) => s.subjectId.toString())
+  );
   const wholeTopics = new Set(list.filter((s) => s.topicId && !s.subTopicId).map((s) => s.topicId.toString()));
   const seen = new Set();
   const selections = list.filter((s) => {
-    if (s.topicId && wholeSubjects.has(s.subjectId.toString())) return false;
+    if ((s.topicId || s.section) && wholeSubjects.has(s.subjectId.toString())) return false;
     if (s.subTopicId && wholeTopics.has(s.topicId.toString())) return false;
     const key = selectionKey(s);
     if (seen.has(key)) return false;
@@ -125,40 +136,68 @@ const titlesById = async (collection, ids) => {
   return new Map(docs.map((d) => [d._id.toString(), d.title]));
 };
 
-// Attach subject / topic / subtopic titles so the admin list and the student
-// card can show "Topics covered" without one call per item. `topicTitle` is
-// the display label of each selection (the subject itself, a topic, or a
-// subtopic) and `scope` says which.
+// Company tests live in one global collection rather than per tenant.
+const loadCompanyTests = async (ids) => {
+  if (!ids.length) return new Map();
+  const { companyTests } = getGlobalCollections();
+  const docs = await companyTests.find({ _id: { $in: ids.map((id) => new ObjectId(id)) } }).toArray();
+  return new Map(docs.map((d) => [d._id.toString(), d]));
+};
+
+// Attach subject / topic / subtopic / company titles so the admin list and
+// the student card can show "Topics covered" without one call per item.
+// `topicTitle` is the display label of each selection and `scope` says what
+// it is. Company sets also get `companyBrand` (title, initials, colour) for
+// the card artwork.
 const withTopicDetails = async (sets) => {
-  const [subjectTitles, topicTitles, subTopicTitles] = await Promise.all([
-    titlesById("subjects", uniqueIds(sets, "subjectId")),
+  const subjectIds = uniqueIds(sets, "subjectId");
+  const [subjectTitles, topicTitles, subTopicTitles, companies] = await Promise.all([
+    titlesById("subjects", subjectIds),
     titlesById("topics", uniqueIds(sets, "topicId")),
     titlesById("subtopics", uniqueIds(sets, "subTopicId")),
+    loadCompanyTests(subjectIds),
   ]);
 
-  return sets.map((set) => ({
-    ...set,
-    topics: (set.topics || []).map((t) => {
-      const subjectTitle = subjectTitles.get(t.subjectId.toString()) || "Deleted subject";
+  return sets.map((set) => {
+    let companyBrand = null;
+    const topics = (set.topics || []).map((t) => {
+      const company = companies.get(t.subjectId.toString());
+      if (company && !companyBrand) {
+        companyBrand = { title: company.title, initials: company.initials || "", color: company.color || "" };
+      }
+      const subjectTitle =
+        subjectTitles.get(t.subjectId.toString()) || company?.title || "Deleted subject";
       const parentTopicTitle = t.topicId ? topicTitles.get(t.topicId.toString()) || "Deleted topic" : null;
-      const scope = t.subTopicId ? "subtopic" : t.topicId ? "topic" : "subject";
+      const scope = t.subTopicId
+        ? "subtopic"
+        : t.topicId
+          ? "topic"
+          : t.section
+            ? "section"
+            : company
+              ? "company"
+              : "subject";
       const topicTitle =
         scope === "subtopic"
           ? subTopicTitles.get(t.subTopicId.toString()) || "Deleted subtopic"
           : scope === "topic"
             ? parentTopicTitle
-            : `All of ${subjectTitle}`;
+            : scope === "section"
+              ? t.section
+              : `All of ${subjectTitle}`;
       return {
         subjectId: t.subjectId,
         ...(t.topicId ? { topicId: t.topicId } : {}),
         ...(t.subTopicId ? { subTopicId: t.subTopicId } : {}),
+        ...(t.section ? { section: t.section } : {}),
         scope,
         subjectTitle,
         parentTopicTitle: scope === "subtopic" ? parentTopicTitle : null,
         topicTitle,
       };
-    }),
-  }));
+    });
+    return { ...set, topics, companyBrand };
+  });
 };
 
 // Validates the request body and returns either { err } or { data } with
@@ -233,6 +272,63 @@ const buildSetPayload = async (body) => {
 };
 
 // ─── Practice Sets ────────────────────────────────────────────────────────────
+
+// GET /practice-sets/company-sources
+// Company tests with their sections and question counts per difficulty, built
+// from the questions that actually exist (the test's own `sections` list can
+// mention sections that have no questions yet). Coding questions are left out:
+// company sets run in the multiple-choice player.
+module.exports.getCompanySources = async (req, res) => {
+  try {
+    const { companyTests } = getGlobalCollections();
+    const tests = await companyTests.find({}).sort({ title: 1 }).toArray();
+    const ids = tests.flatMap((t) => [t._id, t._id.toString()]);
+    const questions = ids.length
+      ? await findInAllTenants(
+          "questions",
+          { subjectId: { $in: ids }, questionType: { $ne: CODING_TYPE } },
+          "find"
+        )
+      : [];
+
+    const emptyCounts = () => ({ totalQuestions: 0, easyQuestions: 0, mediumQuestions: 0, hardQuestions: 0 });
+    // Same rule as difficultyClause: no difficulty counts as medium.
+    const addTo = (counts, q) => {
+      const level = q.difficulty ? String(q.difficulty).toLowerCase() : "medium";
+      counts.totalQuestions += 1;
+      if (counts[`${level}Questions`] !== undefined) counts[`${level}Questions`] += 1;
+    };
+
+    const byCompany = new Map(tests.map((t) => [t._id.toString(), { counts: emptyCounts(), sections: new Map() }]));
+    for (const q of questions) {
+      const entry = byCompany.get(q.subjectId.toString());
+      if (!entry) continue;
+      addTo(entry.counts, q);
+      const name = String(q.sectionName || "").trim();
+      if (!name) continue;
+      if (!entry.sections.has(name)) entry.sections.set(name, emptyCounts());
+      addTo(entry.sections.get(name), q);
+    }
+
+    res.status(200).json({
+      data: tests.map((t) => {
+        const entry = byCompany.get(t._id.toString());
+        return {
+          _id: t._id,
+          title: t.title,
+          initials: t.initials,
+          color: t.color,
+          hiringType: t.hiringType,
+          patternName: t.patternName,
+          ...entry.counts,
+          sections: [...entry.sections.entries()].map(([name, counts]) => ({ name, ...counts })),
+        };
+      }),
+    });
+  } catch (error) {
+    res.status(500).json({ err: error.message });
+  }
+};
 
 module.exports.getQuestionCountForTopics = async (req, res) => {
   try {
