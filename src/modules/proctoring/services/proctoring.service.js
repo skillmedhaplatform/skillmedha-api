@@ -23,7 +23,9 @@ const {
 const { ObjectId } = require("mongodb");
 const { mandatory: authenticate } = require("../../../shared/middleware/auth.middleware");
 const { selectTenantDB } = require("../../../shared/middleware/selectTenantDB.middleware");
-const { getTenantDB } = require("../../../shared/db/connection");
+const { connectTodb, getTenantDB } = require("../../../shared/db/connection");
+const axios = require("axios");
+const azureBlobService = require("../../../shared/utils/azureBlobService");
 const app = express.Router();
 const port = 6886;
 
@@ -113,7 +115,7 @@ const indexFacesFunc = (file, fileName) => {
 
 app.post("/indexFaces", async (req, res) => {
   const fileName = "indexFace.png";
-  const { student } = getTenantDB(req.tenantDB);
+  const { student } = connectTodb(req.tenantDB);
   try {
     const indexData = await indexFacesFunc(req.body.img);
     rmSync(`./uploads/${fileName}`);
@@ -147,46 +149,134 @@ const searchFacesByImageFun = (file, faceData, fileName) => {
   return rekog.send(new SearchFacesByImageCommand(params));
 };
 
-const compareFacesFun = async (newFace, newFileName, faceData, bucket_name) => {
-  const fileContentNew = convertbase64ToBlob(newFace, newFileName);
+const getTargetImageBytes = async (faceData, bucket_name) => {
+  if (!faceData) {
+    throw new Error("Student face data is not available. Please complete KYC verification first.");
+  }
+
+  // 1. If faceData is already a base64 string
+  if (typeof faceData === "string" && faceData.startsWith("data:image")) {
+    return Buffer.from(faceData.split(";base64,").pop(), "base64");
+  }
+
+  // 2. If faceData is a URL string or an object with file/url property
+  const imageUrl = typeof faceData === "string" ? faceData : (faceData.file || faceData.url);
+  if (imageUrl && (imageUrl.startsWith("http://") || imageUrl.startsWith("https://"))) {
+    try {
+      const response = await axios.get(imageUrl, {
+        responseType: "arraybuffer",
+        timeout: 10000,
+      });
+      return Buffer.from(response.data);
+    } catch (fetchErr) {
+      console.warn("Failed to fetch KYC image via HTTP URL, trying Azure Blob:", fetchErr.message);
+    }
+  }
+
+  // 3. If faceData has a key or blob name in Azure Blob Storage
+  const blobKey = faceData.key || (imageUrl ? path.basename(imageUrl.split("?")[0]) : null);
+  if (blobKey) {
+    const container = bucket_name && bucket_name !== "synsper-test-series" ? bucket_name : "skillmedha-utils";
+    try {
+      return await azureBlobService.downloadBlob(container, blobKey);
+    } catch (azureErr) {
+      if (container !== "skillmedha-utils") {
+        return await azureBlobService.downloadBlob("skillmedha-utils", blobKey);
+      }
+      throw azureErr;
+    }
+  }
+
+  throw new Error("Could not retrieve stored KYC image for face comparison");
+};
+
+const compareFacesFun = async (newFace, faceData, bucket_name) => {
+  const sourceBytes = typeof newFace === "string" && newFace.startsWith("data:image")
+    ? Buffer.from(newFace.split(";base64,").pop(), "base64")
+    : Buffer.from(newFace);
+
+  const targetBytes = await getTargetImageBytes(faceData, bucket_name);
 
   const params = {
     QualityFilter: "HIGH",
-    SimilarityThreshold: 90,
+    SimilarityThreshold: 80,
     SourceImage: {
-      Bytes: fileContentNew,
+      Bytes: sourceBytes,
     },
     TargetImage: {
-      S3Object: {
-        Bucket: bucket_name,
-        Name: faceData.key,
-      },
+      Bytes: targetBytes,
     },
   };
   return rekog.send(new CompareFacesCommand(params));
 };
 
 app.post("/compareFaces", async (req, res) => {
-  const newFileName = "newFace.png";
-  const { student } = getTenantDB(req.tenantDB);
   try {
-    const { studentId } = req.body;
-    const { bucket_name } = req.body;
+    const { studentId, bucket_name, img } = req.body;
+    if (!studentId) {
+      return res.status(400).json({ success: false, err: "studentId is required" });
+    }
+    if (!img) {
+      return res.status(400).json({ success: false, err: "Camera image is required" });
+    }
 
-    const studentData = await student.findOne({
-      _id: new ObjectId(studentId),
-    });
+    let studentCol = req.tenantDB ? connectTodb(req.tenantDB)?.student : null;
+    if (!studentCol && req.orgId) {
+      const db = await getTenantDB(req.orgId);
+      studentCol = connectTodb(db)?.student;
+    }
+
+    if (!studentCol) {
+      return res.status(500).json({ success: false, err: "Database connection for tenant is unavailable" });
+    }
+
+    let studentData = null;
+    if (ObjectId.isValid(studentId)) {
+      studentData = await studentCol.findOne({ _id: new ObjectId(studentId) });
+    }
+    if (!studentData) {
+      studentData = await studentCol.findOne({ _id: studentId });
+    }
+    if (!studentData) {
+      studentData = await studentCol.findOne({ globalId: studentId });
+    }
+
+    if (!studentData) {
+      return res.status(404).json({
+        success: false,
+        err: `Student record not found (ID: ${studentId})`,
+      });
+    }
+
+    if (!studentData?.faceData) {
+      return res.status(400).json({
+        success: false,
+        err: "No KYC face data found for this student. Please complete KYC first.",
+      });
+    }
+
     const compareFaces = await compareFacesFun(
-      req.body.img,
-      newFileName,
+      img,
       studentData.faceData,
       bucket_name
     );
-    rmSync(`./uploads/${newFileName}`);
-    res.send({ data: compareFaces });
+
+    const faceMatches = compareFaces?.FaceMatches || [];
+    const hasMatch = faceMatches.length > 0;
+    const similarity = hasMatch ? faceMatches[0].Similarity : 0;
+    const isMatched = hasMatch && similarity >= 85;
+
+    res.json({
+      success: isMatched,
+      matched: isMatched,
+      similarity,
+      FaceMatches: faceMatches,
+      UnmatchedFaces: compareFaces.UnmatchedFaces || [],
+      data: compareFaces,
+    });
   } catch (error) {
-    // rmSync(`./uploads/${newFileName}`);
-    res.send({ err: error.message });
+    console.error("compareFaces error:", error.message);
+    res.status(500).json({ success: false, err: error.message, error: error.message });
   }
 });
 
