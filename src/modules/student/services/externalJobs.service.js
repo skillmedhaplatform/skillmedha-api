@@ -507,11 +507,77 @@ async function getExternalJobFilters(req, res) {
       { $group: { _id: `$${field}`, count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ];
-    const [cities, skills, latest] = await Promise.all([
+    const now = new Date();
+    const d1 = new Date(now - 24 * 60 * 60 * 1000);
+    const d3 = new Date(now - 3 * 24 * 60 * 60 * 1000);
+    const d7 = new Date(now - 7 * 24 * 60 * 60 * 1000);
+    const d30 = new Date(now - 30 * 24 * 60 * 60 * 1000);
+
+    const [cities, skills, latest, facetsResult] = await Promise.all([
       externalJobs.aggregate(popular('cities')).toArray(),
       externalJobs.aggregate(popular('skills')).toArray(),
       externalJobs.find({}, { projection: { lastSeenAt: 1 } }).sort({ lastSeenAt: -1 }).limit(1).toArray(),
+      externalJobs.aggregate([
+        {
+          $facet: {
+            total: [{ $count: 'c' }],
+            workMode: [{ $group: { _id: '$workplace', c: { $sum: 1 } } }],
+            experience: [{ $group: { _id: '$experienceLevel', c: { $sum: 1 } } }],
+            jobType: [{ $group: { _id: '$jobType', c: { $sum: 1 } } }],
+            posted24h: [{ $match: { postedAt: { $gte: d1 } } }, { $count: 'c' }],
+            posted3d: [{ $match: { postedAt: { $gte: d3 } } }, { $count: 'c' }],
+            posted7d: [{ $match: { postedAt: { $gte: d7 } } }, { $count: 'c' }],
+            posted30d: [{ $match: { postedAt: { $gte: d30 } } }, { $count: 'c' }],
+          },
+        },
+      ]).toArray(),
     ]);
+
+    const facets = facetsResult[0] || {};
+    const totalJobsCount = facets.total?.[0]?.c || 0;
+    const workModeCounts = (facets.workMode || []).reduce((acc, curr) => {
+      if (curr._id) acc[curr._id] = curr.c;
+      return acc;
+    }, {});
+    const expCounts = (facets.experience || []).reduce((acc, curr) => {
+      if (curr._id) acc[curr._id] = curr.c;
+      return acc;
+    }, {});
+    const typeCounts = (facets.jobType || []).reduce((acc, curr) => {
+      if (curr._id) {
+        const k = String(curr._id).toLowerCase().replace(/[^a-z]/g, '');
+        acc[k] = (acc[k] || 0) + curr.c;
+      }
+      return acc;
+    }, {});
+
+    const counts = {
+      total: totalJobsCount,
+      workMode: {
+        any: totalJobsCount,
+        onsite: workModeCounts.onsite || 0,
+        hybrid: workModeCounts.hybrid || 0,
+        remote: workModeCounts.remote || 0,
+      },
+      experience: {
+        any: totalJobsCount,
+        fresher: expCounts.fresher || 0,
+        experienced: expCounts.experienced || 0,
+      },
+      jobType: {
+        any: totalJobsCount,
+        fulltime: typeCounts.fulltime || 0,
+        internship: typeCounts.internship || 0,
+        contract: typeCounts.contract || 0,
+      },
+      posted: {
+        any: totalJobsCount,
+        last24h: facets.posted24h?.[0]?.c || 0,
+        last3d: facets.posted3d?.[0]?.c || 0,
+        last7d: facets.posted7d?.[0]?.c || 0,
+        last30d: facets.posted30d?.[0]?.c || 0,
+      },
+    };
 
     // Names only, most common first — only options that have real jobs.
     return res.status(200).json({
@@ -520,6 +586,7 @@ async function getExternalJobFilters(req, res) {
         cities: cities.map((c) => ({ value: c._id, label: CITY_DISPLAY[c._id] || c._id })),
         skills: skills.map((s) => s._id),
         lastSyncedAt: getLastSync()?.finishedAt || latest[0]?.lastSeenAt || null,
+        counts,
       },
     });
   } catch (error) {

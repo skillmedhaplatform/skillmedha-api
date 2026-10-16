@@ -12,6 +12,7 @@
     "jobSocket": "nodemon src/modules/tpo/services/jobSocket.service.js",
     "ai": "nodemon src/shared/utils/ai.js",
     "lint": "eslint src/**/*.js --fix",
+    "seed:website-practice": "node scripts/seedWebsitePractice.js",
     "test": "echo \"No tests configured yet\" && exit 0"
   },
   "engines": {

@@ -1,0 +1,200 @@
+'use strict';
+
+const defaultWebsitePracticeSets = [
+  {
+    id: "nt-1",
+    title: "Reasoning - Beginner Level",
+    category: "Non-Technical",
+    level: "Beginner",
+    imageKey: "course-1",
+    imageUrl: "",
+    isFree: true,
+    price: 0,
+    originalPrice: 0,
+    questionsCount: 30,
+    duration: "45 mins",
+    isBundle: false,
+    topics: [
+      "Number Series Basics",
+      "Blood Relations",
+      "Direction Sense"
+    ],
+    isExamPattern: false,
+    examDetails: null,
+    bundleDetails: null,
+    status: "active",
+    order: 1
+  },
+  {
+    id: "nt-2",
+    title: "Reasoning - Intermediate Level",
+    category: "Non-Technical",
+    level: "Intermediate",
+    imageKey: "course-2",
+    imageUrl: "",
+    isFree: false,
+    price: 149,
+    originalPrice: 299,
+    questionsCount: 150,
+    duration: "2.5 hours",
+    isBundle: false,
+    topics: [
+      "Coding-Decoding",
+      "Seating Arrangement",
+      "Syllogism",
+      "Data Sufficiency"
+    ],
+    isExamPattern: false,
+    examDetails: null,
+    bundleDetails: null,
+    status: "active",
+    order: 2
+  },
+  {
+    id: "nt-bundle-1",
+    title: "Reasoning Complete Masterclass Bundle",
+    category: "Non-Technical",
+    level: "Bundle",
+    imageKey: "course-3",
+    imageUrl: "",
+    isFree: false,
+    price: 499,
+    originalPrice: 1299,
+    questionsCount: 500,
+    duration: "8 hours",
+    isBundle: true,
+    bundleDetails: {
+      levelsIncluded: ["Beginner", "Intermediate", "Pro", "Advanced"],
+      topicsIncluded: "All 15+ Reasoning topics",
+      savings: "Save ₹797 compared to individual purchases"
+    },
+    topics: [],
+    isExamPattern: false,
+    examDetails: null,
+    status: "active",
+    order: 3
+  },
+  {
+    id: "tech-1",
+    title: "Core Java - Pro Level",
+    category: "Technical",
+    level: "Pro",
+    imageKey: "course-4",
+    imageUrl: "",
+    isFree: false,
+    price: 199,
+    originalPrice: 399,
+    questionsCount: 200,
+    duration: "3 hours",
+    isBundle: false,
+    topics: [
+      "Multithreading & Concurrency",
+      "Exception Handling Deep Dive",
+      "Java Collections Framework",
+      "JVM Architecture"
+    ],
+    isExamPattern: false,
+    examDetails: null,
+    bundleDetails: null,
+    status: "active",
+    order: 4
+  },
+  {
+    id: "code-1",
+    title: "Data Structures - Arrays & Strings",
+    category: "Coding",
+    level: "Beginner",
+    imageKey: "course-5",
+    imageUrl: "",
+    isFree: true,
+    price: 0,
+    originalPrice: 0,
+    questionsCount: 25,
+    duration: "1.5 hours",
+    isBundle: false,
+    topics: [
+      "Array Manipulation",
+      "Two Pointers Technique",
+      "String Reversal & Palindromes"
+    ],
+    isExamPattern: false,
+    examDetails: null,
+    bundleDetails: null,
+    status: "active",
+    order: 5
+  },
+  {
+    id: "tech-2",
+    title: "SQL & Databases - Intermediate",
+    category: "Technical",
+    level: "Intermediate",
+    imageKey: "course-6",
+    imageUrl: "",
+    isFree: false,
+    price: 99,
+    originalPrice: 199,
+    questionsCount: 120,
+    duration: "2 hours",
+    isBundle: false,
+    topics: [
+      "Joins & Subqueries",
+      "Indexing & Performance",
+      "Normalization"
+    ],
+    isExamPattern: false,
+    examDetails: null,
+    bundleDetails: null,
+    status: "active",
+    order: 6
+  },
+  {
+    id: "code-2",
+    title: "Dynamic Programming Masterclass",
+    category: "Coding",
+    level: "Advanced",
+    imageKey: "course-1",
+    imageUrl: "",
+    isFree: false,
+    price: 299,
+    originalPrice: 599,
+    questionsCount: 100,
+    duration: "5 hours",
+    isBundle: false,
+    topics: [
+      "Memoization vs Tabulation",
+      "Knapsack Variants",
+      "Longest Common Subsequence"
+    ],
+    isExamPattern: false,
+    examDetails: null,
+    bundleDetails: null,
+    status: "active",
+    order: 7
+  },
+  {
+    id: "nt-3",
+    title: "Quantitative Aptitude - Speed Math",
+    category: "Non-Technical",
+    level: "Beginner",
+    imageKey: "course-2",
+    imageUrl: "",
+    isFree: true,
+    price: 0,
+    originalPrice: 0,
+    questionsCount: 50,
+    duration: "1 hour",
+    isBundle: false,
+    topics: [
+      "Vedic Math Tricks",
+      "Percentage Shortcuts",
+      "Ratio & Proportion Basics"
+    ],
+    isExamPattern: false,
+    examDetails: null,
+    bundleDetails: null,
+    status: "active",
+    order: 8
+  }
+];
+
+module.exports = { defaultWebsitePracticeSets };

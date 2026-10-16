@@ -189,6 +189,7 @@ async function getStudentCreds(req, res) {
         verified: globalUser ? globalUser.active : false,
         active: globalUser ? globalUser.active : false,
         orgDetails: orgDetails || { orgId: req.orgId },
+        signupSource: globalUser?.signupSource || responseData?.signupSource || (req.orgId === process.env.WEBSITE_SIGNUP_ORG_ID ? 'website' : undefined),
       }
     });
   } catch (error) {
@@ -229,7 +230,7 @@ async function registerStudent(req, res) {
   try {
     const {
       email, password, firstName, lastName, phone, orgId: bodyOrgId,
-      userName, type, departmentId,
+      userName, type, departmentId, from, redirect,
     } = req.body;
     const orgIdToUse = req.orgId || bodyOrgId;
 
@@ -237,7 +238,12 @@ async function registerStudent(req, res) {
     const hash = await bcrypt.hash(password, salt);
 
     const verificationToken = CryptoJS.AES.encrypt(
-      JSON.stringify({ email, orgId: orgIdToUse }),
+      JSON.stringify({
+        email,
+        orgId: orgIdToUse,
+        from: from || undefined,
+        redirect: redirect || (from === 'practice' ? '/student/practice-new' : undefined),
+      }),
       secretToken
     ).toString();
 
@@ -270,7 +276,16 @@ async function verifyStudent(req, res) {
       { email: decoded.email },
       { $set: { active: true, verificationToken: null } }
     );
-    res.status(200).json({ success: true, message: 'Email verified successfully' });
+    const targetRedirect = decoded.redirect || (decoded.from === 'practice' ? '/student/practice-new' : null);
+    const targetFrom = decoded.from || (targetRedirect?.includes('practice') ? 'practice' : null);
+    const redirectUrl = config.urls.studentPortal + '/login' +
+      (targetRedirect ? `?redirect=${encodeURIComponent(targetRedirect)}` : '') +
+      (targetFrom ? `${targetRedirect ? '&' : '?'}from=${encodeURIComponent(targetFrom)}` : '');
+
+    if (req.headers.accept && req.headers.accept.includes('text/html')) {
+      return res.redirect(redirectUrl);
+    }
+    res.status(200).json({ success: true, message: 'Email verified successfully', redirectUrl });
   } catch (error) {
     res.status(500).json({ err: error.message });
   }

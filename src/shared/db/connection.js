@@ -39,6 +39,7 @@ async function connectSharedDB() {
   sharedDB = client.db(config.mongo.sharedDbName);
   // Initialise global collections now that client is connected
   _initGlobalCollections();
+  await autoSeedWebsitePractice();
   return sharedDB;
 }
 
@@ -95,6 +96,7 @@ function _initGlobalCollections() {
   const db          = client.db('SkilmedhaDefault');
   const db_resources = client.db('skillmedha_resources');
   const KSquaredb   = client.db('KSquare');
+  const websiteDB   = client.db(config.mongo.websiteDbName || 'website');
 
   db.collection('users').createIndex(
     { email: 1 },
@@ -139,6 +141,8 @@ function _initGlobalCollections() {
     chatWidgetUsage:        db_resources.collection('chatWidgetUsage'),
     companyTests:           db_resources.collection('companyTests'),
     externalJobs:           db_resources.collection('externalJobs'),
+    websitePractice:        websiteDB.collection('practice'),
+    websiteSettings:        websiteDB.collection('settings'),
   };
 
   // Outside jobs synced from company job boards (see modules/student/services/jobBoards/sync.js).
@@ -150,7 +154,45 @@ function _initGlobalCollections() {
   externalJobs.createIndex({ companyKey: 1, lastSeenAt: 1 }, { background: true })
     .catch(err => console.warn('[DB] externalJobs companyKey index:', err));
 
+  websiteDB.collection('practice').createIndex({ id: 1 }, { unique: true, background: true })
+    .catch(err => console.warn('[DB] website practice id index:', err));
+  websiteDB.collection('practice').createIndex({ order: 1 }, { background: true })
+    .catch(err => console.warn('[DB] website practice order index:', err));
+  websiteDB.collection('settings').createIndex({ key: 1 }, { unique: true, background: true })
+    .catch(err => console.warn('[DB] website settings key index:', err));
+
   return _globalCollections;
+}
+
+async function autoSeedWebsitePractice() {
+  try {
+    const { websitePractice, websiteSettings } = getGlobalCollections();
+    const count = await websitePractice.countDocuments();
+    if (count === 0) {
+      console.log('[DB] Seeding default static practice sets into website.practice collection...');
+      const { defaultWebsitePracticeSets } = require('../data/defaultWebsitePractice');
+      const docsToInsert = defaultWebsitePracticeSets.map(s => ({
+        ...s,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }));
+      await websitePractice.insertMany(docsToInsert);
+      console.log(`[DB] Successfully seeded ${docsToInsert.length} practice sets into website.practice.`);
+    }
+
+    const setting = await websiteSettings.findOne({ key: 'practice_data_mode' });
+    if (!setting) {
+      await websiteSettings.insertOne({
+        key: 'practice_data_mode',
+        value: 'static',
+        updatedAt: new Date(),
+        updatedBy: 'system_auto_seed'
+      });
+      console.log('[DB] Default website practice mode set to "static".');
+    }
+  } catch (err) {
+    console.warn('[DB] autoSeedWebsitePractice failed:', err.message);
+  }
 }
 
 // ─── Tenant DB Resolution ────────────────────────────────────────────────────
@@ -323,6 +365,11 @@ function getReviewsDB() {
   return sharedClient.db(config.mongo.reviewsDbName);
 }
 
+function getWebsiteDB() {
+  if (!sharedClient) throw new Error('MongoDB client not connected');
+  return sharedClient.db(config.mongo.websiteDbName || 'website');
+}
+
 module.exports = {
   getMongoUrl,
   connectSharedDB,
@@ -332,4 +379,5 @@ module.exports = {
   getTenantDB,
   connectTodb,
   getReviewsDB,
+  getWebsiteDB,
 };

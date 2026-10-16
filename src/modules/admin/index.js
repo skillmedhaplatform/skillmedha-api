@@ -138,6 +138,14 @@ router.post('/updateTpo', mandatory, selectTenantDB, tpoSvc.updateTpo);
 router.put('/toggleTpoStatus/:tpoId', mandatory, selectTenantDB, tpoSvc.toggleTpoStatus);
 router.delete('/deleteTpo/:tpoId', mandatory, selectTenantDB, tpoSvc.deleteTpo);
 
+// ─── Website Content & Mode Management ───────────────────────────────────────
+const websiteSvc = require('./services/website.service');
+router.get('/admin/website/practice-config', mandatory, websiteSvc.getPracticeConfig);
+router.put('/admin/website/practice-mode', mandatory, websiteSvc.updatePracticeMode);
+router.get('/admin/website/static-practice-sets', mandatory, websiteSvc.getStaticPracticeSets);
+router.get('/admin/website/dynamic-practice-preview', mandatory, websiteSvc.getDynamicPracticePreview);
+router.post('/admin/website/seed-static-practice', mandatory, websiteSvc.seedStaticPracticeSets);
+
 // ─── Auth / Organisation (from original users.js) ────────────────────────────
 router.use('/', usersSvc);
 
