@@ -176,7 +176,7 @@ router.post('/createStudentAccount', authenticate, selectTenantDB, async (req, r
 router.post('/registerStudent', async (req, res) => {
   const { mainDBusers } = getCollections();
   try {
-    const { email, password, firstName, lastName, phone, orgId: bodyOrgId, departmentId } = req.body;
+    const { email, password, firstName, lastName, phone, orgId: bodyOrgId, departmentId, from, redirect } = req.body;
     let orgIdToUse = req.orgId || bodyOrgId;
 
     // Map 'skill' alias to actual special organization ID
@@ -196,7 +196,13 @@ router.post('/registerStudent', async (req, res) => {
     const salt = await bcrypt.genSalt();
     const hash = await bcrypt.hash(password, salt);
     const verificationToken = CryptoJS.AES.encrypt(
-      JSON.stringify({ email: email.toLowerCase(), orgId: orgIdToUse, departmentId }), secretToken
+      JSON.stringify({
+        email: email.toLowerCase(),
+        orgId: orgIdToUse,
+        departmentId,
+        from: from || undefined,
+        redirect: redirect || (from === 'practice' ? '/student/practice-new' : (from === 'resumeBuilder' ? '/student/resumeBuilder' : undefined)),
+      }), secretToken
     ).toString();
 
     let globalId;
@@ -209,9 +215,10 @@ router.post('/registerStudent', async (req, res) => {
         { $set: { firstName, lastName, phone, password: hash, orgId: orgIdToUse, verificationToken, active: false } }
       );
     } else {
+      const signupSource = from || (orgIdToUse === process.env.WEBSITE_SIGNUP_ORG_ID ? 'website' : undefined);
       const globalResult = await mainDBusers.insertOne({
         email: email.toLowerCase(), firstName, lastName, phone, password: hash,
-        type: 'student', active: false, orgId: orgIdToUse, verificationToken,
+        type: 'student', active: false, orgId: orgIdToUse, verificationToken, signupSource,
       });
       globalId = globalResult.insertedId.toString();
     }
@@ -220,6 +227,7 @@ router.post('/registerStudent', async (req, res) => {
       const tenantDB = await getTenantDB(orgIdToUse);
       const { student, departments } = connectTodb(tenantDB);
       const enrollmentId = await generateEnrollmentId(new Date(), tenantDB);
+      const signupSource = from || (orgIdToUse === process.env.WEBSITE_SIGNUP_ORG_ID ? 'website' : undefined);
       
       const result = await student.insertOne({
         email: email.toLowerCase(),
@@ -230,6 +238,7 @@ router.post('/registerStudent', async (req, res) => {
         type: 'student',
         enrollementId: enrollmentId,
         globalId: globalId,
+        signupSource,
         active: false,
         verified: false,
         createdAt: new Date().toLocaleString()
@@ -336,7 +345,12 @@ router.get('/verify', async (req, res) => {
       }
     }
 
-    res.redirect(config.urls.studentPortal + '/login');
+    const targetRedirect = decoded.redirect || (decoded.from === 'practice' ? '/student/practice-new' : (decoded.from === 'resumeBuilder' ? '/student/resumeBuilder' : null));
+    const targetFrom = decoded.from || (targetRedirect?.includes('practice') ? 'practice' : (targetRedirect?.includes('resumeBuilder') ? 'resumeBuilder' : null));
+    const redirectUrl = config.urls.studentPortal + '/login' +
+      (targetRedirect ? `?redirect=${encodeURIComponent(targetRedirect)}` : '') +
+      (targetFrom ? `${targetRedirect ? '&' : '?'}from=${encodeURIComponent(targetFrom)}` : '');
+    res.redirect(redirectUrl);
   } catch (error) { res.status(500).json({ err: error.message }); }
 });
 

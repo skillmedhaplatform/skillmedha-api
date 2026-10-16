@@ -23,6 +23,7 @@ const config = {
     ksquareDb: 'KSquare',
     archiveDbName: process.env.ARCHIVE_DB_NAME || 'Archive',
     reviewsDbName: process.env.REVIEWS_DB_NAME || 'reviews',
+    websiteDbName: process.env.WEBSITE_DB_NAME || 'website',
   },
 
   // Redis

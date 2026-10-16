@@ -1224,7 +1224,7 @@ module.exports.getAllJobsBasedOnplacements = async (req, res) => {
 //   }
 // };
 module.exports.getAllJobs = async (req, res) => {
-  const { job, assignedJob } = connectTodb(req.tenantDB);
+  const { job, assignedJob, placements } = connectTodb(req.tenantDB);
   if (!req.tenantDB)
     return res.status(500).json({ error: "No tenant DB available" });
 
@@ -1497,10 +1497,15 @@ module.exports.getAllJobs = async (req, res) => {
     const totalDocs = jobsWithCollegeNames.length;
     const totalPages = Math.ceil(totalDocs / limit);
 
-    // console.log("Final result:", {
-    //   totalDocs,
-    //   paginatedJobs: paginatedJobs.length,
-    // });
+    let totalTenantJobs = 0;
+    try {
+      const localJobCount = job ? await job.countDocuments({}) : 0;
+      const assignedJobCount = assignedJob ? await assignedJob.countDocuments({}) : 0;
+      const placementsCount = placements ? await placements.countDocuments({}) : 0;
+      totalTenantJobs = localJobCount + assignedJobCount + placementsCount;
+    } catch (err) {
+      totalTenantJobs = totalDocs;
+    }
 
     res.status(200).json({
       data: paginatedJobs,
@@ -1509,6 +1514,7 @@ module.exports.getAllJobs = async (req, res) => {
         totalPages,
         currentPage: page,
         limit,
+        totalTenantJobs,
       },
     });
   } catch (error) {
