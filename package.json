@@ -13,7 +13,8 @@
     "ai": "nodemon src/shared/utils/ai.js",
     "lint": "eslint src/**/*.js --fix",
     "seed:website-practice": "node scripts/seedWebsitePractice.js",
-    "test": "echo \"No tests configured yet\" && exit 0"
+    "test": "echo \"No tests configured yet\" && exit 0",
+    "test:unit": "node --test src/shared/utils/__tests__/"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -108,6 +108,21 @@ router.post('/practice-bundles', mandatory, selectTenantDB, practiceSetsSvc.crea
 router.put('/practice-bundles/:id', mandatory, selectTenantDB, practiceSetsSvc.updatePracticeBundle);
 router.delete('/practice-bundles/:id', mandatory, selectTenantDB, practiceSetsSvc.deletePracticeBundle);
 
+// ─── Resume Templates & Bundles (Admin configures template access/pricing) ───
+const resumeTemplatesSvc = require('./services/resumeTemplates.service');
+const { canView: resumeView, canEdit: resumeEdit } = resumeTemplatesSvc;
+router.get('/resume-templates', mandatory, resumeView, resumeTemplatesSvc.getTemplateConfigs);
+router.get('/resume-templates/stats', mandatory, resumeView, resumeTemplatesSvc.getStats);
+router.get('/resume-templates/purchases', mandatory, resumeView, resumeTemplatesSvc.getPurchases);
+router.get('/resume-templates/audit', mandatory, resumeView, resumeTemplatesSvc.getAuditLog);
+router.put('/resume-templates', mandatory, resumeEdit, resumeTemplatesSvc.saveTemplateConfigsBulk);
+router.put('/resume-templates/:key', mandatory, resumeEdit, resumeTemplatesSvc.saveTemplateConfig);
+router.get('/resume-bundles', mandatory, resumeView, resumeTemplatesSvc.getBundles);
+router.get('/resume-bundles/:id', mandatory, resumeView, resumeTemplatesSvc.getBundle);
+router.post('/resume-bundles', mandatory, resumeEdit, resumeTemplatesSvc.createBundle);
+router.put('/resume-bundles/:id', mandatory, resumeEdit, resumeTemplatesSvc.updateBundle);
+router.delete('/resume-bundles/:id', mandatory, resumeEdit, resumeTemplatesSvc.deleteBundle);
+
 // ─── Marquee management (Admin creates/edits marquee notices) ─────────────────
 router.get('/marquee', marqueeSvc.getMarqueeNotices);
 router.post('/marquee', mandatory, upload.single('thumbnail'), marqueeSvc.createMarqueeNotice);

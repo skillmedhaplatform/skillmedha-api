@@ -15,7 +15,7 @@ const {
   payment,
   paymentConfigCollection,
 } = require("../../../shared/db/connection").getGlobalCollections();
-const { getTenantDB, connectTodb } = require("../../../shared/db/connection");
+const { getTenantDB, connectTodb, getGlobalCollections } = require("../../../shared/db/connection");
 const { mandatory } = require("../../../shared/middleware/auth.middleware");
 const { selectTenantDB } = require("../../../shared/middleware/selectTenantDB.middleware");
 const sucessMail = require("../../../shared/utils/sucessMail");
@@ -1078,38 +1078,86 @@ router.post("/buyNow/verify", mandatory, selectTenantDB, async (req, res) => {
   }
 });
 
-// ─── Practice Sets & Bundles ─────────────────────────────────────────────────
-// Same Razorpay order → verify flow as Buy Now, but for practice content.
-// A purchase is stored as an enrolledData entry ({ refId, type, expiresAt })
-// which the practice catalog reads to unlock sets.
+// ─── Practice Sets, Resume Templates & Bundles ───────────────────────────────
+// Same Razorpay order → verify flow as Buy Now, for catalogue items the admin
+// prices (practice sets/bundles, resume templates/bundles). A purchase is
+// stored as an enrolledData entry ({ refId, type, expiresAt, ... }) which the
+// matching catalogue reads to unlock content. Each item type below says how to
+// load the item, whether it can be bought, and whether the student already
+// has it.
 const { findInAllTenants } = require("../../student/services/practice.service");
 const { getPurchases } = require("../../student/services/practiceCatalog.service");
+const { loadAccessContext: loadResumeAccess } = require("../../student/services/resumeCatalog.service");
+const resumeRules = require("../../../shared/utils/resumeAccess");
 
-const PRACTICE_ITEM_COLLECTIONS = {
-  practiceSet: "practiceSets",
-  practiceBundle: "practiceBundles",
+const isObjectId = (id) => mongoDB.ObjectId.isValid(id);
+
+const CATALOG_ITEMS = {
+  practiceSet: {
+    validId: isObjectId,
+    load: (id) => findInAllTenants("practiceSets", { _id: new mongoDB.ObjectId(id) }, "findOne"),
+    cannotBuy: (item) =>
+      item.status !== "published"
+        ? "This item is no longer available"
+        : item.plan !== "premium"
+          ? "This practice set is free — start it directly"
+          : null,
+    alreadyOwned: async (userId, id) =>
+      (await getPurchases(userId)).sets.has(id) ? "You already have access to this" : null,
+  },
+  practiceBundle: {
+    validId: isObjectId,
+    load: (id) => findInAllTenants("practiceBundles", { _id: new mongoDB.ObjectId(id) }, "findOne"),
+    cannotBuy: (item) => (item.status !== "published" ? "This item is no longer available" : null),
+    alreadyOwned: async (userId, id) =>
+      (await getPurchases(userId)).bundles.has(id) ? "You already have access to this" : null,
+  },
+  resumeTemplate: {
+    validId: resumeRules.isTemplateKey,
+    load: (key) => getGlobalCollections().resumeTemplates.findOne({ templateKey: key }),
+    cannotBuy: (item) =>
+      item.visibility !== "published"
+        ? "This template is no longer available"
+        : item.access === "free"
+          ? "This template is free — use it directly"
+          : item.access === "bundle"
+            ? "This template is available only in a bundle"
+            : null,
+    alreadyOwned: async (userId, key) =>
+      (await loadResumeAccess(userId)).accessFor(key).unlocked ? "You already have this template" : null,
+  },
+  resumeBundle: {
+    validId: isObjectId,
+    load: (id) => getGlobalCollections().resumeBundles.findOne({ _id: new mongoDB.ObjectId(id) }),
+    cannotBuy: (item) => (item.status !== "published" ? "This bundle is no longer available" : null),
+    // Owning some templates is fine (checkout shows which); owning all of them
+    // would make the purchase pointless, so that's refused.
+    alreadyOwned: async (userId, id, item) => {
+      const ctx = await loadResumeAccess(userId);
+      if (ctx.purchases.bundles.has(id)) return "You already have this bundle";
+      const accessByKey = new Map((item.templateKeys || []).map((k) => [k, ctx.accessFor(k)]));
+      const { newKeys } = resumeRules.bundleOverlap(item, accessByKey);
+      return newKeys.length ? null : "You already have every template in this bundle";
+    },
+    // Snapshot the bundle's templates so later edits can't change what was bought.
+    entitlementExtras: (item) => ({ templateKeys: item.templateKeys || [] }),
+  },
 };
 
-const findPracticeItem = (itemType, itemId) => {
-  const collection = PRACTICE_ITEM_COLLECTIONS[itemType];
-  if (!collection || !mongoDB.ObjectId.isValid(itemId)) return null;
-  return findInAllTenants(collection, { _id: new mongoDB.ObjectId(itemId) }, "findOne");
-};
+const itemTitle = (item) => item?.title || item?.name || "";
 
-router.post("/practice/createOrder", mandatory, async (req, res) => {
+const createCatalogOrder = async (req, res) => {
   try {
     const { itemType, itemId } = req.body;
-    if (!PRACTICE_ITEM_COLLECTIONS[itemType] || !mongoDB.ObjectId.isValid(itemId)) {
+    const handler = CATALOG_ITEMS[itemType];
+    if (!handler || !handler.validId(itemId)) {
       return res.status(400).json({ error: "Invalid item selected" });
     }
 
-    const item = await findPracticeItem(itemType, itemId);
-    if (!item || item.status !== "published") {
-      return res.status(404).json({ error: "This item is no longer available" });
-    }
-    if (itemType === "practiceSet" && item.plan !== "premium") {
-      return res.status(400).json({ error: "This practice set is free — start it directly" });
-    }
+    const item = await handler.load(itemId);
+    if (!item) return res.status(404).json({ error: "This item is no longer available" });
+    const notForSale = handler.cannotBuy(item);
+    if (notForSale) return res.status(400).json({ error: notForSale });
 
     // Never trust a client-supplied amount.
     const price = Number(item.price) || 0;
@@ -1117,12 +1165,8 @@ router.post("/practice/createOrder", mandatory, async (req, res) => {
       return res.status(400).json({ error: "This item has no price set" });
     }
 
-    const purchases = await getPurchases(req.userID);
-    const owned =
-      itemType === "practiceSet" ? purchases.sets.has(itemId) : purchases.bundles.has(itemId);
-    if (owned) {
-      return res.status(400).json({ error: "You already have access to this" });
-    }
+    const owned = await handler.alreadyOwned(req.userID, itemId, item);
+    if (owned) return res.status(400).json({ error: owned });
 
     const keyId = process.env.RZP_ID;
     const order = await instance.orders.create({
@@ -1134,7 +1178,7 @@ router.post("/practice/createOrder", mandatory, async (req, res) => {
         itemId,
         userID: req.userID,
         orgId: req.orgId,
-        title: String(item.title || "").slice(0, 200),
+        title: itemTitle(item).slice(0, 200),
       },
     });
 
@@ -1143,15 +1187,15 @@ router.post("/practice/createOrder", mandatory, async (req, res) => {
       amount: order.amount,
       currency: order.currency,
       keyId,
-      title: item.title,
+      title: itemTitle(item),
     });
   } catch (error) {
-    console.error("Practice createOrder error:", error);
+    console.error("Catalog createOrder error:", error);
     res.status(500).json({ error: "Failed to create order" });
   }
-});
+};
 
-router.post("/practice/verify", mandatory, async (req, res) => {
+const verifyCatalogPayment = async (req, res) => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
     if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
@@ -1167,8 +1211,9 @@ router.post("/practice/verify", mandatory, async (req, res) => {
 
     const order = await instance.orders.fetch(razorpay_order_id);
     const { itemType, itemId, userID } = order.notes || {};
-    if (!PRACTICE_ITEM_COLLECTIONS[itemType] || !itemId) {
-      return res.status(400).json({ error: "No practice item found for this order" });
+    const handler = CATALOG_ITEMS[itemType];
+    if (!handler || !itemId) {
+      return res.status(400).json({ error: "No item found for this order" });
     }
     if (String(userID) !== String(req.userID)) {
       return res.status(403).json({ error: "This order belongs to another account" });
@@ -1182,7 +1227,7 @@ router.post("/practice/verify", mandatory, async (req, res) => {
 
     const [student, item] = await Promise.all([
       mainDBusers.findOne({ _id: new mongoDB.ObjectId(userID) }),
-      findPracticeItem(itemType, itemId),
+      handler.load(itemId),
     ]);
     if (!student) {
       return res.status(404).json({ error: "Student not found" });
@@ -1193,6 +1238,7 @@ router.post("/practice/verify", mandatory, async (req, res) => {
     const expiresAt =
       validityDays > 0 ? new Date(purchasedAt.getTime() + validityDays * 24 * 60 * 60 * 1000) : null;
     const amountCharged = order.amount / 100;
+    const title = itemTitle(item) || order.notes.title || "";
 
     const paymentdone = await payment.insertOne({
       orderId: razorpay_order_id,
@@ -1201,7 +1247,7 @@ router.post("/practice/verify", mandatory, async (req, res) => {
       currency: order.currency,
       itemType,
       itemId,
-      itemTitle: item?.title || order.notes.title || "",
+      itemTitle: title,
       userId: userID,
       email: student.email,
       createdAt: purchasedAt,
@@ -1215,12 +1261,13 @@ router.post("/practice/verify", mandatory, async (req, res) => {
           enrolledData: {
             refId: itemId,
             type: itemType,
-            title: item?.title || order.notes.title || "",
+            title,
             orderId: razorpay_order_id,
             amountCharged,
             createdAt: purchasedAt,
             expiresAt,
             active: true,
+            ...(item && handler.entitlementExtras ? handler.entitlementExtras(item) : {}),
           },
         },
       }
@@ -1234,9 +1281,12 @@ router.post("/practice/verify", mandatory, async (req, res) => {
       expiresAt,
     });
   } catch (error) {
-    console.error("Practice verify error:", error);
+    console.error("Catalog verify error:", error);
     res.status(500).json({ error: "Payment verification failed", details: error.message });
   }
-});
+};
+
+router.post(["/practice/createOrder", "/catalog/createOrder"], mandatory, createCatalogOrder);
+router.post(["/practice/verify", "/catalog/verify"], mandatory, verifyCatalogPayment);
 
 module.exports = router;
