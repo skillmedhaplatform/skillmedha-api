@@ -143,6 +143,10 @@ function _initGlobalCollections() {
     externalJobs:           db_resources.collection('externalJobs'),
     websitePractice:        websiteDB.collection('practice'),
     websiteSettings:        websiteDB.collection('settings'),
+    // Resume template catalogue config (one doc per template key) and bundles.
+    resumeTemplates:        db_resources.collection('resumeTemplates'),
+    resumeBundles:          db_resources.collection('resumeBundles'),
+    resumeConfigAudit:      db_resources.collection('resumeConfigAudit'),
   };
 
   // Outside jobs synced from company job boards (see modules/student/services/jobBoards/sync.js).
