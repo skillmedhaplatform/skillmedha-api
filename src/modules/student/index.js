@@ -84,6 +84,11 @@ const practiceCatalogSvc = require('./services/practiceCatalog.service');
 router.get('/practice-catalog', mandatory, selectTenantDB, practiceCatalogSvc.getPracticeCatalog);
 router.post('/practice-sets/:id/start', mandatory, selectTenantDB, practiceCatalogSvc.startPracticeSet);
 
+// ─── Resume Templates (student catalog + server-side access check) ───────────
+const resumeCatalogSvc = require('./services/resumeCatalog.service');
+router.get('/resume-catalog', mandatory, resumeCatalogSvc.getResumeCatalog);
+router.post('/resume-templates/:key/authorize', mandatory, resumeCatalogSvc.authorizeTemplate);
+
 const companyTestsSvc = require('../admin/services/companyTests.service');
 router.get('/company-tests', mandatory, selectTenantDB, companyTestsSvc.getCompanyTests);
 
