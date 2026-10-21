@@ -56,7 +56,7 @@ const difficultyClause = (difficulty) => {
 const buildQuestionQuery = (selections, { difficulty, category } = {}) => {
   const clauses = [{ $or: selections.map(sourceClause) }];
   if (category === "coding") clauses.push({ questionType: CODING_TYPE });
-  else if (category) clauses.push({ questionType: { $ne: CODING_TYPE } });
+  else if (category && category !== "company") clauses.push({ questionType: { $ne: CODING_TYPE } });
   const diff = difficultyClause(difficulty);
   if (diff) clauses.push(diff);
   return { $and: clauses };
@@ -275,9 +275,8 @@ const buildSetPayload = async (body) => {
 
 // GET /practice-sets/company-sources
 // Company tests with their sections and question counts per difficulty, built
-// from the questions that actually exist (the test's own `sections` list can
-// mention sections that have no questions yet). Coding questions are left out:
-// company sets run in the multiple-choice player.
+// from the questions that actually exist. Both multiple choice and coding
+// questions are included so company tests provide their complete question bank.
 module.exports.getCompanySources = async (req, res) => {
   try {
     const { companyTests } = getGlobalCollections();
@@ -286,7 +285,7 @@ module.exports.getCompanySources = async (req, res) => {
     const questions = ids.length
       ? await findInAllTenants(
           "questions",
-          { subjectId: { $in: ids }, questionType: { $ne: CODING_TYPE } },
+          { subjectId: { $in: ids } },
           "find"
         )
       : [];
@@ -313,6 +312,18 @@ module.exports.getCompanySources = async (req, res) => {
     res.status(200).json({
       data: tests.map((t) => {
         const entry = byCompany.get(t._id.toString());
+        const testSections = Array.isArray(t.sections) ? t.sections : [];
+        const sortedSections = [...entry.sections.entries()]
+          .sort(([a], [b]) => {
+            const idxA = testSections.indexOf(a);
+            const idxB = testSections.indexOf(b);
+            if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+            if (idxA !== -1) return -1;
+            if (idxB !== -1) return 1;
+            return a.localeCompare(b);
+          })
+          .map(([name, counts]) => ({ name, ...counts }));
+
         return {
           _id: t._id,
           title: t.title,
@@ -321,7 +332,7 @@ module.exports.getCompanySources = async (req, res) => {
           hiringType: t.hiringType,
           patternName: t.patternName,
           ...entry.counts,
-          sections: [...entry.sections.entries()].map(([name, counts]) => ({ name, ...counts })),
+          sections: sortedSections,
         };
       }),
     });

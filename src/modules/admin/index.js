@@ -147,6 +147,12 @@ router.get('/admin/website/static-practice-sets', mandatory, websiteSvc.getStati
 router.get('/admin/website/dynamic-practice-preview', mandatory, websiteSvc.getDynamicPracticePreview);
 router.post('/admin/website/seed-static-practice', mandatory, websiteSvc.seedStaticPracticeSets);
 
+router.get('/admin/website/company-config', mandatory, websiteSvc.getCompanyConfig);
+router.put('/admin/website/company-mode', mandatory, websiteSvc.updateCompanyMode);
+router.get('/admin/website/static-company-tests', mandatory, websiteSvc.getStaticCompanyTests);
+router.get('/admin/website/dynamic-company-preview', mandatory, websiteSvc.getDynamicCompanyPreview);
+router.post('/admin/website/seed-static-company', mandatory, websiteSvc.seedStaticCompanyTests);
+
 // ─── Auth / Organisation (from original users.js) ────────────────────────────
 router.use('/', usersSvc);
 

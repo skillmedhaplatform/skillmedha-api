@@ -142,6 +142,7 @@ function _initGlobalCollections() {
     companyTests:           db_resources.collection('companyTests'),
     externalJobs:           db_resources.collection('externalJobs'),
     websitePractice:        websiteDB.collection('practice'),
+    websiteCompanyExams:    websiteDB.collection('companyExams'),
     websiteSettings:        websiteDB.collection('settings'),
   };
 
@@ -158,6 +159,10 @@ function _initGlobalCollections() {
     .catch(err => console.warn('[DB] website practice id index:', err));
   websiteDB.collection('practice').createIndex({ order: 1 }, { background: true })
     .catch(err => console.warn('[DB] website practice order index:', err));
+  websiteDB.collection('companyExams').createIndex({ id: 1 }, { unique: true, background: true })
+    .catch(err => console.warn('[DB] website companyExams id index:', err));
+  websiteDB.collection('companyExams').createIndex({ order: 1 }, { background: true })
+    .catch(err => console.warn('[DB] website companyExams order index:', err));
   websiteDB.collection('settings').createIndex({ key: 1 }, { unique: true, background: true })
     .catch(err => console.warn('[DB] website settings key index:', err));
 
