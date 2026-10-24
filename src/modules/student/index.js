@@ -81,7 +81,7 @@ router.get('/getStudentPracResults/:userId', mandatory, selectTenantDB, practice
 
 // ─── Practice Sets & Bundles (student catalog + gated start) ─────────────────
 const practiceCatalogSvc = require('./services/practiceCatalog.service');
-router.get('/practice-catalog', mandatory, practiceCatalogSvc.getPracticeCatalog);
+router.get('/practice-catalog', mandatory, selectTenantDB, practiceCatalogSvc.getPracticeCatalog);
 router.post('/practice-sets/:id/start', mandatory, selectTenantDB, practiceCatalogSvc.startPracticeSet);
 
 // ─── Resume Templates (student catalog + server-side access check) ───────────

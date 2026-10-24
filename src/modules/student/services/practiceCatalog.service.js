@@ -111,12 +111,35 @@ module.exports.getPracticeCatalog = async (req, res) => {
       loadSetsByIds
     );
 
+    // Check if the student has completed attempts for practice sets (e.g. company-wise tests)
+    let userAttemptedTestIds = new Set();
+    try {
+      if (req.tenantDB && req.userID) {
+        const { student, mockTestAttempts } = connectTodb(req.tenantDB);
+        const findStudent = await student.findOne({ globalId: req.userID });
+        if (findStudent && mockTestAttempts) {
+          const attempts = await mockTestAttempts
+            .find({ userId: findStudent._id }, { projection: { testId: 1 } })
+            .toArray();
+          attempts.forEach((a) => {
+            if (a.testId) userAttemptedTestIds.add(String(a.testId));
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching user attempts in getPracticeCatalog:", err);
+    }
+
     res.status(200).json({
       data: {
-        sets: sets.map((set) => ({
-          ...toStudentSet(set),
-          access: getSetAccess(set, purchases, ownedBundles),
-        })),
+        sets: sets.map((set) => {
+          const setIdStr = set._id.toString();
+          return {
+            ...toStudentSet(set),
+            hasCompletedTest: userAttemptedTestIds.has(setIdStr),
+            access: getSetAccess(set, purchases, ownedBundles),
+          };
+        }),
         bundles: bundles.map((bundle) => {
           const id = bundle._id.toString();
           return {
