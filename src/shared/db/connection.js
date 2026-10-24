@@ -40,6 +40,8 @@ async function connectSharedDB() {
   // Initialise global collections now that client is connected
   _initGlobalCollections();
   await autoSeedWebsitePractice();
+  await autoSeedWebsiteCourses();
+  await autoSeedWebsiteInternships();
   return sharedDB;
 }
 
@@ -143,6 +145,8 @@ function _initGlobalCollections() {
     externalJobs:           db_resources.collection('externalJobs'),
     websitePractice:        websiteDB.collection('practice'),
     websiteCompanyExams:    websiteDB.collection('companyExams'),
+    websiteCourses:         websiteDB.collection('courses'),
+    websiteInternships:     websiteDB.collection('internships'),
     websiteSettings:        websiteDB.collection('settings'),
     // Resume template catalogue config (one doc per template key) and bundles.
     resumeTemplates:        db_resources.collection('resumeTemplates'),
@@ -167,6 +171,14 @@ function _initGlobalCollections() {
     .catch(err => console.warn('[DB] website companyExams id index:', err));
   websiteDB.collection('companyExams').createIndex({ order: 1 }, { background: true })
     .catch(err => console.warn('[DB] website companyExams order index:', err));
+  websiteDB.collection('courses').createIndex({ id: 1 }, { unique: true, background: true })
+    .catch(err => console.warn('[DB] website courses id index:', err));
+  websiteDB.collection('courses').createIndex({ order: 1 }, { background: true })
+    .catch(err => console.warn('[DB] website courses order index:', err));
+  websiteDB.collection('internships').createIndex({ id: 1 }, { unique: true, background: true })
+    .catch(err => console.warn('[DB] website internships id index:', err));
+  websiteDB.collection('internships').createIndex({ order: 1 }, { background: true })
+    .catch(err => console.warn('[DB] website internships order index:', err));
   websiteDB.collection('settings').createIndex({ key: 1 }, { unique: true, background: true })
     .catch(err => console.warn('[DB] website settings key index:', err));
 
@@ -201,6 +213,68 @@ async function autoSeedWebsitePractice() {
     }
   } catch (err) {
     console.warn('[DB] autoSeedWebsitePractice failed:', err.message);
+  }
+}
+
+async function autoSeedWebsiteCourses() {
+  try {
+    const { websiteCourses, websiteSettings } = getGlobalCollections();
+    const count = await websiteCourses.countDocuments();
+    if (count === 0) {
+      console.log('[DB] Seeding default static courses into website.courses collection...');
+      const { defaultWebsiteCourses } = require('../data/defaultWebsiteCourses');
+      const docsToInsert = defaultWebsiteCourses.map(s => ({
+        ...s,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }));
+      await websiteCourses.insertMany(docsToInsert);
+      console.log(`[DB] Successfully seeded ${docsToInsert.length} courses into website.courses.`);
+    }
+
+    const setting = await websiteSettings.findOne({ key: 'courses_data_mode' });
+    if (!setting) {
+      await websiteSettings.insertOne({
+        key: 'courses_data_mode',
+        value: 'static',
+        updatedAt: new Date(),
+        updatedBy: 'system_auto_seed'
+      });
+      console.log('[DB] Default website courses mode set to "static".');
+    }
+  } catch (err) {
+    console.warn('[DB] autoSeedWebsiteCourses failed:', err.message);
+  }
+}
+
+async function autoSeedWebsiteInternships() {
+  try {
+    const { websiteInternships, websiteSettings } = getGlobalCollections();
+    const count = await websiteInternships.countDocuments();
+    if (count === 0) {
+      console.log('[DB] Seeding default static internships into website.internships collection...');
+      const { defaultWebsiteInternships } = require('../data/defaultWebsiteInternships');
+      const docsToInsert = defaultWebsiteInternships.map(s => ({
+        ...s,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }));
+      await websiteInternships.insertMany(docsToInsert);
+      console.log(`[DB] Successfully seeded ${docsToInsert.length} internships into website.internships.`);
+    }
+
+    const setting = await websiteSettings.findOne({ key: 'internships_data_mode' });
+    if (!setting) {
+      await websiteSettings.insertOne({
+        key: 'internships_data_mode',
+        value: 'static',
+        updatedAt: new Date(),
+        updatedBy: 'system_auto_seed'
+      });
+      console.log('[DB] Default website internships mode set to "static".');
+    }
+  } catch (err) {
+    console.warn('[DB] autoSeedWebsiteInternships failed:', err.message);
   }
 }
 
