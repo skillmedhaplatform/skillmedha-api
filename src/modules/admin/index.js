@@ -162,6 +162,24 @@ router.get('/admin/website/static-practice-sets', mandatory, websiteSvc.getStati
 router.get('/admin/website/dynamic-practice-preview', mandatory, websiteSvc.getDynamicPracticePreview);
 router.post('/admin/website/seed-static-practice', mandatory, websiteSvc.seedStaticPracticeSets);
 
+router.get('/admin/website/company-config', mandatory, websiteSvc.getCompanyConfig);
+router.put('/admin/website/company-mode', mandatory, websiteSvc.updateCompanyMode);
+router.get('/admin/website/static-company-tests', mandatory, websiteSvc.getStaticCompanyTests);
+router.get('/admin/website/dynamic-company-preview', mandatory, websiteSvc.getDynamicCompanyPreview);
+router.post('/admin/website/seed-static-company', mandatory, websiteSvc.seedStaticCompanyTests);
+
+router.get('/admin/website/courses-config', mandatory, websiteSvc.getCoursesConfig);
+router.put('/admin/website/courses-mode', mandatory, websiteSvc.updateCoursesMode);
+router.get('/admin/website/static-courses', mandatory, websiteSvc.getStaticCourses);
+router.get('/admin/website/dynamic-courses-preview', mandatory, websiteSvc.getDynamicCoursesPreview);
+router.post('/admin/website/seed-static-courses', mandatory, websiteSvc.seedStaticCourses);
+
+router.get('/admin/website/internships-config', mandatory, websiteSvc.getInternshipsConfig);
+router.put('/admin/website/internships-mode', mandatory, websiteSvc.updateInternshipsMode);
+router.get('/admin/website/static-internships', mandatory, websiteSvc.getStaticInternships);
+router.get('/admin/website/dynamic-internships-preview', mandatory, websiteSvc.getDynamicInternshipsPreview);
+router.post('/admin/website/seed-static-internships', mandatory, websiteSvc.seedStaticInternships);
+
 // ─── Auth / Organisation (from original users.js) ────────────────────────────
 router.use('/', usersSvc);
 

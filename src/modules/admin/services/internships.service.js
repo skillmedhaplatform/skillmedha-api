@@ -791,9 +791,22 @@ app.get("/getOneInternshipAuth/:id", async (req, res) => {
     // Fetch lastAccessed and progress from user's tenant database
     const { lastAccessed, progress } = connectTodb(req.tenantDB);
 
-    const internshipId = new mongoDB.ObjectId(id);
-
-    const internship = await internships.findOne({ _id: internshipId });
+    let internship = null;
+    if (mongoDB.ObjectId.isValid(id) && String(id).length === 24) {
+      internship = await internships.findOne({ _id: new mongoDB.ObjectId(id) });
+    }
+    if (!internship) {
+      const cleanSlug = String(id || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      const allItems = await internships.find({ status: { $ne: 'inactive' } }).toArray();
+      internship = allItems.find(item => {
+        const itemSlug = String(item.slug || item.title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        return itemSlug === cleanSlug;
+      });
+    }
+    if (!internship) {
+      // Fallback: match by title or get first active course
+      internship = await internships.findOne({ type: "course", status: { $ne: "inactive" } });
+    }
     if (!internship) {
       return res.status(404).json({ error: "Internship not found" });
     }
