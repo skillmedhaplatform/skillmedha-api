@@ -2718,18 +2718,43 @@ function computeCartTotal(items = []) {
   return items.reduce((sum, i) => sum + Number(i.discountedPrice ?? i.price ?? 0), 0);
 }
 
-// Helper: re-fetch & return enriched cart (used after every mutation)
+// Helper: extract live pricing from course/internship document
+function getLiveCoursePrices(course) {
+  const price = Number(course?.pricing?.originalPrice ?? course?.price ?? 0);
+  const discountedPrice = Number(
+    course?.pricing?.finalPrice ??
+    course?.discountedPrice ??
+    course?.pricing?.currentPrice ??
+    course?.price ??
+    price
+  );
+  return { price, discountedPrice };
+}
+
+// Helper: re-fetch & return enriched cart (used after every mutation and on GET /cart)
 async function sendCartResponse(req, res) {
-  const { cart, student} = connectTodb(req.tenantDB);
+  const { cart } = connectTodb(req.tenantDB);
   const cartDoc = await cart.findOne({ student: req.userID });
 
   if (!cartDoc?.items?.length) return res.status(200).json({ items: [], totalAmount: 0 });
+
+  let cartDirty = false;
 
   const enriched = (
     await Promise.all(
       cartDoc.items.map(async (item) => {
         const course = await resolveCourse(item.courseId, req.tenantDB);
-        if (!course) return null;
+        if (!course) {
+          cartDirty = true;
+          return null;
+        }
+
+        const { price: livePrice, discountedPrice: liveDiscountedPrice } = getLiveCoursePrices(course);
+
+        if (item.price !== livePrice || item.discountedPrice !== liveDiscountedPrice) {
+          cartDirty = true;
+        }
+
         return {
           _id: item._id,
           courseId: {
@@ -2739,14 +2764,35 @@ async function sendCartResponse(req, res) {
             category: course.category,
             difficulty: course.difficulty,
             type: course.type,
+            price: livePrice,
+            discountedPrice: liveDiscountedPrice,
+            pricing: course.pricing || {
+              originalPrice: livePrice,
+              finalPrice: liveDiscountedPrice,
+            },
           },
-          price: item.price,
-          discountedPrice: item.discountedPrice,
+          price: livePrice,
+          discountedPrice: liveDiscountedPrice,
           addedAt: item.addedAt,
         };
       })
     )
   ).filter(Boolean);
+
+  // If any item's price changed or deleted courses were removed, sync cartDoc in MongoDB
+  if (cartDirty) {
+    const updatedItems = enriched.map((i) => ({
+      _id: i._id,
+      courseId: i.courseId._id,
+      price: i.price,
+      discountedPrice: i.discountedPrice,
+      addedAt: i.addedAt,
+    }));
+    await cart.updateOne(
+      { student: req.userID },
+      { $set: { items: updatedItems, updatedAt: new Date().getTime() } }
+    );
+  }
 
   return res.status(200).json({
     items: enriched,

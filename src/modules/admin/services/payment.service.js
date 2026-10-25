@@ -627,21 +627,21 @@ router.post("/getPaymentID", async (req, res) => {
 
 // ─── Cart checkout (multi-course, single Razorpay order) ──────────────────────
 
-async function resolveCartCourseType(courseId, tenantDB) {
+async function resolveCartCourse(courseId, tenantDB) {
   const { internships: tenantCourses } = connectTodb(tenantDB);
   let course = await tenantCourses.findOne(
     { _id: new mongoDB.ObjectId(courseId) },
-    { projection: { type: 1 } }
+    { projection: { type: 1, pricing: 1, price: 1, discountedPrice: 1 } }
   );
-  if (course) return course.type || "course";
+  if (course) return course;
 
   const kSquareDB = await getTenantDB("KSquare");
   const { internships: kCourses } = connectTodb(kSquareDB);
   course = await kCourses.findOne(
     { _id: new mongoDB.ObjectId(courseId) },
-    { projection: { type: 1 } }
+    { projection: { type: 1, pricing: 1, price: 1, discountedPrice: 1 } }
   );
-  return course?.type || "course";
+  return course || null;
 }
 
 router.post("/cart/createOrder", mandatory, selectTenantDB, async (req, res) => {
@@ -674,12 +674,25 @@ router.post("/cart/createOrder", mandatory, selectTenantDB, async (req, res) => 
     }
 
     const itemsWithType = await Promise.all(
-      pendingItems.map(async (item) => ({
-        courseId: item.courseId,
-        price: item.price,
-        discountedPrice: item.discountedPrice,
-        type: await resolveCartCourseType(item.courseId, req.tenantDB),
-      }))
+      pendingItems.map(async (item) => {
+        const course = await resolveCartCourse(item.courseId, req.tenantDB);
+        const livePrice = Number(course?.pricing?.originalPrice ?? course?.price ?? item.price ?? 0);
+        const liveDiscountedPrice = Number(
+          course?.pricing?.finalPrice ??
+          course?.discountedPrice ??
+          course?.pricing?.currentPrice ??
+          course?.price ??
+          item.discountedPrice ??
+          livePrice
+        );
+
+        return {
+          courseId: item.courseId,
+          price: livePrice,
+          discountedPrice: liveDiscountedPrice,
+          type: course?.type || "course",
+        };
+      })
     );
 
     const totalAmount = itemsWithType.reduce(
