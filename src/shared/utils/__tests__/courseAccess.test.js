@@ -96,3 +96,34 @@ test('config and bundle validation', () => {
   assert.equal(ok.data.mrp, 99);
   assert.equal(ok.data.status, 'draft');
 });
+
+test('price edits keep the course editor fields and coupon in sync', () => {
+  assert.equal(rules.validateCoursePricing({}, {}), null);
+  const withCoupon = { currentPrice: '799', originalPrice: '2499', couponDiscount: 170 };
+  assert.deepEqual(rules.validateCoursePricing({ price: 999 }, { ...withCoupon, couponCode: 'SAVE' }).data, {
+    currentPrice: '999',
+    originalPrice: '2499',
+    couponCode: 'SAVE',
+    couponDiscount: 170,
+    finalPrice: 829,
+  });
+  // Coupon edited here.
+  const edited = rules.validateCoursePricing({ price: 999, couponCode: ' new50 ', couponDiscount: 50 }, withCoupon).data;
+  assert.equal(edited.couponCode, 'NEW50');
+  assert.equal(edited.finalPrice, 949);
+  const removed = rules.validateCoursePricing({ price: 999, couponDiscount: 0 }, withCoupon).data;
+  assert.equal(removed.couponCode, '');
+  assert.equal(removed.finalPrice, 999);
+  assert.ok(rules.validateCoursePricing({ price: 999, couponDiscount: 50, couponCode: '' }, {}).err, 'coupon needs a code');
+  assert.ok(rules.validateCoursePricing({ price: 150 }, withCoupon).err, 'price must exceed coupon');
+  assert.ok(rules.validateCoursePricing({ price: 500, mrp: 400 }, {}).err, 'mrp below price');
+  assert.ok(rules.validateCoursePricing({ price: -1 }, {}).err);
+  assert.deepEqual(rules.validateCoursePricing({ price: 0 }, { ...withCoupon, couponCode: 'SAVE' }).data, {
+    currentPrice: '0',
+    originalPrice: '2499',
+    couponCode: 'SAVE',
+    couponDiscount: 0,
+    finalPrice: 0,
+  });
+  assert.equal(rules.validateCoursePricing({ price: 300 }, { originalPrice: '100' }).data.originalPrice, '300');
+});

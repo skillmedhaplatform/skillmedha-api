@@ -1,5 +1,5 @@
 const { ObjectId } = require("mongodb");
-const { getGlobalCollections } = require("../../../shared/db/connection");
+const { getGlobalCollections, getTenantDB, connectTodb } = require("../../../shared/db/connection");
 const rules = require("../../../shared/utils/courseAccess");
 
 // Admin side of course access: per-course Free / Premium / Bundle-only and
@@ -7,6 +7,9 @@ const rules = require("../../../shared/utils/courseAccess");
 // the course editor. Purchases live in users.enrolledData + payment and are
 // never touched here, so config changes can't remove what students own.
 // Only items with type "course" are listed — internships are untouched.
+
+// Prices are edited here too, but stored on the course itself (the same
+// fields the course editor uses), so checkout, cards and the editor agree.
 
 // Configuration is CMS-admin only; viewing is open to any CMS role.
 const CMS_ROLES = ["ADMIN", "MODERATOR", "VIEWER"];
@@ -89,6 +92,10 @@ module.exports.getCourseConfigs = async (req, res) => {
           status: course.status,
           price: rules.coursePrice(course),
           mrp: rules.courseMrp(course),
+          // Price before coupon, as set in the course editor.
+          basePrice: Number(course.pricing?.currentPrice ?? course.price ?? 0) || 0,
+          couponCode: course.pricing?.couponCode || "",
+          couponDiscount: Number(course.pricing?.couponDiscount) || 0,
           collegeCount: (course.assignedOrgs || []).length,
           access: config.access,
           visibility: config.visibility,
@@ -132,13 +139,67 @@ const saveConfigs = async (valid, req, action) => {
   );
 };
 
-// PUT /course-access/:courseId — save one course's access config.
+// Validates the optional price change for each course; returns { err } or
+// { updates: [{ course, pricing }] }.
+const checkPricing = async (items) => {
+  const priced = items.filter((i) => i.body.price !== undefined && i.body.price !== null && i.body.price !== "");
+  if (!priced.length) return { updates: [] };
+  const courses = await getGlobalCollections()
+    .internshipsCollection.find(
+      { _id: { $in: priced.map((i) => toObjectId(i.courseId)) } },
+      { projection: { title: 1, pricing: 1, assignedOrgs: 1 } }
+    )
+    .toArray();
+  const byId = new Map(courses.map((c) => [c._id.toString(), c]));
+  const updates = [];
+  for (const { courseId, body } of priced) {
+    const course = byId.get(courseId);
+    const result = rules.validateCoursePricing(body, course?.pricing || {});
+    if (result?.err) return { err: `${course?.title || "Course"}: ${result.err}` };
+    if (result) updates.push({ course, pricing: result.data });
+  }
+  return { updates };
+};
+
+// Writes new prices onto the course and any college copy of it.
+const applyPricing = async (updates, req) => {
+  const { internshipsCollection } = getGlobalCollections();
+  const now = new Date().getTime();
+  for (const { course, pricing } of updates) {
+    const $set = {
+      "pricing.currentPrice": pricing.currentPrice,
+      "pricing.originalPrice": pricing.originalPrice,
+      "pricing.finalPrice": pricing.finalPrice,
+      "pricing.couponCode": pricing.couponCode,
+      "pricing.couponDiscount": pricing.couponDiscount,
+      updatedAt: now,
+    };
+    await internshipsCollection.updateOne({ _id: course._id }, { $set });
+    await Promise.all(
+      (course.assignedOrgs || []).map(async (orgId) => {
+        try {
+          const { internships } = connectTodb(await getTenantDB(orgId));
+          await internships.updateOne({ _id: course._id }, { $set });
+        } catch (error) {
+          console.error(`[courseAccess] price sync to ${orgId} failed:`, error.message);
+        }
+      })
+    );
+    audit("price", course._id, "update", course.pricing || null, pricing, req);
+  }
+};
+
+// PUT /course-access/:courseId — save one course's access config, and its
+// price when the body has `price` (and optionally `mrp`).
 module.exports.saveCourseConfig = async (req, res) => {
   try {
     const { err, data } = rules.validateCourseConfig(req.params.courseId, req.body);
     if (err) return res.status(400).json({ err });
     if ((await courseExists([data.courseId])).length) return res.status(404).json({ err: "Course not found" });
+    const priceCheck = await checkPricing([{ courseId: data.courseId, body: req.body }]);
+    if (priceCheck.err) return res.status(400).json({ err: priceCheck.err });
 
+    await applyPricing(priceCheck.updates, req);
     await saveConfigs([data], req, "");
     const saved = await getGlobalCollections().courseAccess.findOne({ courseId: data.courseId });
     res.status(200).json({ msg: "Course access saved", data: saved });
@@ -164,7 +225,10 @@ module.exports.saveCourseConfigsBulk = async (req, res) => {
     }
     const missing = await courseExists(valid.map((d) => d.courseId));
     if (missing.length) return res.status(404).json({ err: `${missing.length} course(s) not found` });
+    const priceCheck = await checkPricing(items.map((item) => ({ courseId: String(item.courseId), body: item })));
+    if (priceCheck.err) return res.status(400).json({ err: priceCheck.err });
 
+    await applyPricing(priceCheck.updates, req);
     await saveConfigs(valid, req, "bulk ");
     res.status(200).json({ msg: `${valid.length} course${valid.length === 1 ? "" : "s"} saved`, data: { count: valid.length } });
   } catch (error) {

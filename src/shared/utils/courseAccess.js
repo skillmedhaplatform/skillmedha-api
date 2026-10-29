@@ -151,6 +151,46 @@ const validateCourseConfig = (courseId, body = {}) => {
   };
 };
 
+/**
+ * Validates a price change made from the access screen, against the course's
+ * current pricing. Same fields the course editor writes: currentPrice and
+ * originalPrice (as text) plus finalPrice = price − coupon discount, which is
+ * what checkout charges. Returns null when the body has no pricing,
+ * otherwise { err } or { data }.
+ */
+const validateCoursePricing = (body = {}, pricing = {}) => {
+  if (body.price === undefined || body.price === null || body.price === '') return null;
+  const price = Number(body.price);
+  if (!Number.isFinite(price) || price < 0) return { err: 'Price must be 0 or more' };
+  if (price > 1000000) return { err: 'Price seems unreasonably high' };
+
+  const hasMrp = body.mrp !== undefined && body.mrp !== null && body.mrp !== '';
+  const mrp = hasMrp ? Number(body.mrp) : Math.max(toNumber(pricing.originalPrice), price);
+  if (!Number.isFinite(mrp) || mrp < 0) return { err: 'Original price must be 0 or more' };
+  if (mrp && mrp < price) return { err: 'Original price cannot be lower than the price' };
+
+  // The coupon can be changed here too; when it isn't sent, the course keeps its own.
+  const couponSent = body.couponDiscount !== undefined && body.couponDiscount !== null && body.couponDiscount !== '';
+  const couponDiscount = couponSent ? Number(body.couponDiscount) : toNumber(pricing.couponDiscount);
+  if (!Number.isFinite(couponDiscount) || couponDiscount < 0) return { err: 'Coupon discount must be 0 or more' };
+  const couponCode = couponDiscount > 0
+    ? cleanText(body.couponCode !== undefined ? body.couponCode : pricing.couponCode, 30).toUpperCase()
+    : '';
+  if (couponDiscount > 0 && !couponCode) return { err: 'Give the coupon a code' };
+  if (price > 0 && couponDiscount >= price) {
+    return { err: `Price must be more than the coupon discount (₹${couponDiscount})` };
+  }
+  return {
+    data: {
+      currentPrice: String(price),
+      originalPrice: mrp ? String(mrp) : '',
+      couponCode,
+      couponDiscount: price > 0 ? couponDiscount : 0,
+      finalPrice: price > 0 ? price - couponDiscount : 0,
+    },
+  };
+};
+
 /** Validates an admin course bundle; returns { err } or { data }. */
 const validateCourseBundle = (body = {}) => {
   const title = cleanText(body.title, 80);
@@ -195,5 +235,6 @@ module.exports = {
   bundleOverlap,
   isObjectIdLike,
   validateCourseConfig,
+  validateCoursePricing,
   validateCourseBundle,
 };
