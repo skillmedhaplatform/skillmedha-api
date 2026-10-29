@@ -5,8 +5,10 @@
 // rules can be unit-tested and shared by the admin, student, payment and
 // course-content services. Internships are never affected.
 //
-// A course with no saved config keeps today's behaviour: priced courses are
-// Premium at their editor price, ₹0 courses are Free, and all are visible.
+// A course with no saved config keeps today's behaviour when it has a price
+// (Premium, visible). A new course with no price and no config "needs setup":
+// it stays hidden from students until an admin configures it, so it never
+// goes out free by accident. Prices are set only in Course Access & Bundles.
 
 const ACCESS_TYPES = ['free', 'premium', 'bundle'];
 const VISIBILITIES = ['published', 'hidden'];
@@ -42,14 +44,18 @@ const coursePrice = (course) =>
 
 const courseMrp = (course) => Math.max(toNumber(course?.pricing?.originalPrice), coursePrice(course));
 
-const defaultConfig = (courseId, course) => ({
-  courseId: String(courseId),
-  access: coursePrice(course) > 0 ? 'premium' : 'free',
-  visibility: 'published',
-  featured: false,
-  order: 100,
-  isDefault: true,
-});
+const defaultConfig = (courseId, course) => {
+  const priced = coursePrice(course) > 0;
+  return {
+    courseId: String(courseId),
+    access: 'premium',
+    visibility: priced ? 'published' : 'hidden',
+    featured: false,
+    order: 100,
+    isDefault: true,
+    needsSetup: !priced,
+  };
+};
 
 /**
  * Course purchases from a user's enrolledData.

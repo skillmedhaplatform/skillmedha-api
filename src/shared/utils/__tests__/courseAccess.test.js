@@ -14,10 +14,17 @@ const B1 = 'bbbbbbbbbbbbbbbbbbbbbbb1';
 const config = (overrides = {}) => ({ courseId: C1, access: 'premium', visibility: 'published', ...overrides });
 const ctx = (enrolled = [], extra = {}) => ({ purchases: rules.activePurchases(enrolled, NOW), ...extra });
 
-test('unconfigured courses keep their editor price', () => {
-  assert.equal(rules.defaultConfig(C1, { pricing: { finalPrice: 499 } }).access, 'premium');
-  assert.equal(rules.defaultConfig(C1, { pricing: { currentPrice: 0 } }).access, 'free');
-  assert.equal(rules.defaultConfig(C1, {}).access, 'free');
+test('unconfigured priced courses stay premium; new unpriced courses need setup', () => {
+  const priced = rules.defaultConfig(C1, { pricing: { finalPrice: 499 } });
+  assert.equal(priced.access, 'premium');
+  assert.equal(priced.visibility, 'published');
+  assert.equal(priced.needsSetup, false);
+  const fresh = rules.defaultConfig(C1, {});
+  assert.equal(fresh.needsSetup, true);
+  assert.equal(fresh.visibility, 'hidden');
+  // A new course is never free (or visible) before an admin sets it up.
+  assert.equal(rules.courseAccess(fresh, ctx()).unlocked, false);
+  assert.equal(rules.isVisibleToStudent(fresh, rules.courseAccess(fresh, ctx())), false);
   assert.equal(rules.coursePrice({ discountedPrice: 299, pricing: { currentPrice: 399 } }), 299);
 });
 

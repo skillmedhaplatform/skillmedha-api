@@ -102,6 +102,8 @@ module.exports.getCourseConfigs = async (req, res) => {
           featured: !!config.featured,
           order: config.order ?? 100,
           isDefault: !!config.isDefault,
+          // New course with no price and no config — hidden until set up here.
+          needsSetup: !!config.needsSetup,
           updatedAt: config.updatedAt || null,
           bundles: bundles
             .filter((b) => (b.courseIds || []).includes(id))
