@@ -92,6 +92,7 @@ router.post('/resume-templates/:key/authorize', mandatory, resumeCatalogSvc.auth
 // ─── Course access (student catalog; lesson gates live in internships.service) ─
 const courseCatalogSvc = require('./services/courseCatalog.service');
 router.get('/course-catalog', mandatory, selectTenantDB, courseCatalogSvc.getCourseCatalog);
+router.get('/my-course-purchases', mandatory, courseCatalogSvc.getMyCoursePurchases);
 
 const companyTestsSvc = require('../admin/services/companyTests.service');
 router.get('/company-tests', mandatory, selectTenantDB, companyTestsSvc.getCompanyTests);

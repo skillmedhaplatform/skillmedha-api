@@ -187,6 +187,102 @@ const checkoutRule = async (courseId, course) => {
   return { blocked: null, free: config.access === "free" };
 };
 
+// GET /my-course-purchases — the student's own course and course-bundle
+// purchases, newest first, with amount paid and access validity.
+// College-assigned and free courses aren't purchases, so they aren't listed.
+module.exports.getMyCoursePurchases = async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.userID)) return res.status(200).json({ data: [] });
+    const { mainDBusers, internshipsCollection, courseBundles, payment } = getGlobalCollections();
+    const user = await mainDBusers.findOne(
+      { _id: new ObjectId(req.userID) },
+      { projection: { enrolledData: 1, email: 1 } }
+    );
+    const entries = (user?.enrolledData || []).filter((e) => e?.refId && e.active !== false);
+
+    const courseIds = [...new Set(entries.filter((e) => e.type !== "courseBundle").map((e) => String(e.refId)))]
+      .filter((id) => ObjectId.isValid(id));
+    const bundleIds = [...new Set(entries.filter((e) => e.type === "courseBundle").map((e) => String(e.refId)))]
+      .filter((id) => ObjectId.isValid(id));
+    const [courses, bundles, payments] = await Promise.all([
+      internshipsCollection
+        .find(
+          { _id: { $in: courseIds.map((id) => new ObjectId(id)) }, type: "course" },
+          { projection: { title: 1, media: 1 } }
+        )
+        .toArray(),
+      courseBundles.find({ _id: { $in: bundleIds.map((id) => new ObjectId(id)) } }).toArray(),
+      payment
+        .find({ $or: [{ userId: String(req.userID) }, ...(user?.email ? [{ email: user.email }] : [])] })
+        .project({ orderId: 1, amountCharged: 1, courseIds: 1, itemType: 1, itemId: 1, createdAt: 1 })
+        .toArray(),
+    ]);
+    const courseById = new Map(courses.map((c) => [c._id.toString(), c]));
+    const bundleById = new Map(bundles.map((b) => [b._id.toString(), b]));
+    const thumb = (c) => c?.media?.thumbnailImage || c?.media?.coverImage || null;
+    const paidFor = (entry) => {
+      if (entry.amountCharged !== undefined) return Number(entry.amountCharged) || 0;
+      const p = payments.find((x) => (entry.orderId && x.orderId === entry.orderId) || (x.courseIds || []).includes(String(entry.refId)));
+      return p ? Number(p.amountCharged) || 0 : null;
+    };
+    const now = Date.now();
+    const validity = (entry) => {
+      const expiresAt = entry.expiresAt ? new Date(entry.expiresAt) : null;
+      return { expiresAt, expired: !!expiresAt && expiresAt.getTime() <= now };
+    };
+
+    const data = [];
+    for (const entry of entries) {
+      const id = String(entry.refId);
+      if (entry.type === "courseBundle") {
+        const bundle = bundleById.get(id);
+        const ids = (entry.courseIds?.length ? entry.courseIds : bundle?.courseIds || []).map(String);
+        data.push({
+          kind: "bundle",
+          id,
+          title: bundle?.title || entry.title || "Course bundle",
+          purchasedAt: entry.createdAt || null,
+          amount: paidFor(entry),
+          ...validity(entry),
+          courses: ids.map((cid) => ({ courseId: cid, title: courseById.get(cid)?.title || null, thumbnail: thumb(courseById.get(cid)) })),
+        });
+      } else if (courseById.has(id) && !entry.viaBundle) {
+        const course = courseById.get(id);
+        data.push({
+          kind: "course",
+          id,
+          title: course.title,
+          thumbnail: thumb(course),
+          purchasedAt: entry.createdAt || null,
+          amount: paidFor(entry),
+          ...validity(entry),
+        });
+      }
+    }
+    // Bundle courses need their titles too.
+    const missing = [...new Set(data.flatMap((d) => (d.courses || []).filter((c) => !c.title).map((c) => c.courseId)))]
+      .filter((cid) => ObjectId.isValid(cid));
+    if (missing.length) {
+      const extra = await internshipsCollection
+        .find({ _id: { $in: missing.map((cid) => new ObjectId(cid)) } }, { projection: { title: 1, media: 1 } })
+        .toArray();
+      const extraById = new Map(extra.map((c) => [c._id.toString(), c]));
+      data.forEach((d) =>
+        (d.courses || []).forEach((c) => {
+          if (!c.title) {
+            c.title = extraById.get(c.courseId)?.title || "Course";
+            c.thumbnail = thumb(extraById.get(c.courseId));
+          }
+        })
+      );
+    }
+    data.sort((a, b) => new Date(b.purchasedAt || 0) - new Date(a.purchasedAt || 0));
+    res.status(200).json({ data });
+  } catch (error) {
+    res.status(500).json({ err: error.message });
+  }
+};
+
 module.exports.loadAccessContext = loadAccessContext;
 module.exports.bundleForStudent = bundleForStudent;
 module.exports.accessForRequest = accessForRequest;
