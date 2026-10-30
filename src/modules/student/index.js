@@ -42,10 +42,17 @@ router.use('/', atsChecker);
 router.post('/practice/top-scores', mandatory, selectTenantDB, practiceSvc.saveTopMockScore);
 router.get('/practice/top-scores/:testId', mandatory, selectTenantDB, practiceSvc.getTopMockScores);
 
+const resumeCtrl = require('./controllers/resume.controller');
+const memoryUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
+
 // ─── Resume ──────────────────────────────────────────────────────────────────
 router.post('/createResume', mandatory, selectTenantDB, resumeSvc.createResume || ((req, res) => res.status(501).json({ error: 'Not implemented' })));
 router.post('/updateResume', mandatory, selectTenantDB, resumeSvc.updateResume || ((req, res) => res.status(501).json({ error: 'Not implemented' })));
 router.post('/deleteResume', mandatory, selectTenantDB, resumeSvc.deleteResume || ((req, res) => res.status(501).json({ error: 'Not implemented' })));
+router.post('/parse-resume', optional, memoryUpload.single('resume'), resumeCtrl.parseResume);
 
 // ─── Placements / Jobs (student-facing) ──────────────────────────────────────
 router.get('/getAllJobs', mandatory, selectTenantDB, placementsSvc.getAllJobs);
