@@ -62,4 +62,32 @@ async function deleteResume(req, res) {
   }
 }
 
-module.exports = { createResume, updateResume, deleteResume };
+async function parseResume(req, res) {
+  try {
+    const { parseAndMapResume } = require('../services/resumeParser.service');
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please upload a resume file (PDF or DOCX).',
+      });
+    }
+
+    const { buffer, mimetype, originalname } = req.file;
+    const mappedData = await parseAndMapResume(buffer, mimetype, originalname);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Resume parsed and mapped successfully',
+      data: mappedData,
+    });
+  } catch (error) {
+    console.error('[ResumeController.parseResume] Error:', error.message);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to parse resume.',
+    });
+  }
+}
+
+module.exports = { createResume, updateResume, deleteResume, parseResume };
+
