@@ -152,6 +152,10 @@ function _initGlobalCollections() {
     resumeTemplates:        db_resources.collection('resumeTemplates'),
     resumeBundles:          db_resources.collection('resumeBundles'),
     resumeConfigAudit:      db_resources.collection('resumeConfigAudit'),
+    // Course access config (one doc per course id), course bundles and audit.
+    courseAccess:           db_resources.collection('courseAccess'),
+    courseBundles:          db_resources.collection('courseBundles'),
+    courseConfigAudit:      db_resources.collection('courseConfigAudit'),
   };
 
   // Outside jobs synced from company job boards (see modules/student/services/jobBoards/sync.js).

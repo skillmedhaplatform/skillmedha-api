@@ -17,6 +17,8 @@ const { connectTodb } = require("../../../shared/db/connection");
 const { getTenantDB } = require("../../../shared/db/connection");
 const { internshipsCollection, mainDBusers, zoomMeetingsCollection } = require("../../../shared/db/connection").getGlobalCollections();
 
+const courseCatalog = require("../../student/services/courseCatalog.service");
+
 const app = express.Router();
 const port = 2006;
 
@@ -888,6 +890,15 @@ app.get("/getOneInternshipAuth/:id", async (req, res) => {
 
     internship.sections = enrichedSections;
 
+    // Admin-configured course access: a student who hasn't unlocked a paid
+    // course still sees its details and curriculum, but no lesson content.
+    const access = await courseCatalog.accessForRequest(req, internship);
+    if (access && !access.unlocked) {
+      for (const section of enrichedSections) {
+        section.topics = (section.topics || []).map(courseCatalog.lockTopic);
+      }
+    }
+
     // ── Server-side progress computation ──────────────────────────────────
     // Walk every topic, decide if it is completed based on the progress
     // record that was already merged in (progress / totalDuration >= 90%).
@@ -947,6 +958,7 @@ app.get("/getOneInternshipAuth/:id", async (req, res) => {
       completedCount: serverCompletedCount,
       totalCount: serverTotalCount,
       totalProgress: serverTotalProgress,
+      access,
     });
   } catch (error) {
     console.error("getOneInternshipAuth error:", error);
@@ -2454,6 +2466,29 @@ app.get("/getTopicsFromSection/:id/section/:sid", async (req, res) => {
     res.status(500).json({ err: error.message });
   }
 });
+// The course a topic belongs to (via its internshipId, or the section that
+// lists it) when that course is locked for the requesting student.
+const findLockedCourseForTopic = async (req, topic) => {
+  if (String(req.role || "").toUpperCase() !== "STUDENT") return null;
+  let course = null;
+  if (mongoDB.ObjectId.isValid(topic.internshipId)) {
+    course = await internshipsCollection.findOne(
+      { _id: new mongoDB.ObjectId(topic.internshipId) },
+      { projection: { type: 1, price: 1, discountedPrice: 1, pricing: 1 } }
+    );
+  }
+  if (!course && topic.sectionId) {
+    const sectionIds = [String(topic.sectionId)];
+    if (mongoDB.ObjectId.isValid(topic.sectionId)) sectionIds.push(new mongoDB.ObjectId(topic.sectionId));
+    course = await internshipsCollection.findOne(
+      { sections: { $in: sectionIds } },
+      { projection: { type: 1, price: 1, discountedPrice: 1, pricing: 1 } }
+    );
+  }
+  const access = await courseCatalog.accessForRequest(req, course);
+  return access && !access.unlocked ? { ...access, courseId: course._id.toString() } : null;
+};
+
 app.get("/getOneTopic/:tid", async (req, res) => {
   const { topics, progress } = connectTodb(req.tenantDB);
   if (!req.tenantDB)
@@ -2496,6 +2531,21 @@ app.get("/getOneTopic/:tid", async (req, res) => {
     }
 
     if (!TopicData) throw new Error("Topic data not available");
+
+    // Lessons of a course the student hasn't unlocked are refused.
+    const lockedCourse = await findLockedCourseForTopic(req, TopicData);
+    if (lockedCourse) {
+      return res.status(402).json({
+        err: lockedCourse.access === "bundle"
+          ? "This course is available only in a bundle"
+          : "Enroll in this course to open its lessons",
+        code: "COURSE_LOCKED",
+        courseId: lockedCourse.courseId,
+        access: lockedCourse.access,
+        price: lockedCourse.price,
+        bundles: lockedCourse.bundles,
+      });
+    }
 
     const userId = req.query.userId || req.userID;
 

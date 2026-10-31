@@ -123,6 +123,19 @@ router.post('/resume-bundles', mandatory, resumeEdit, resumeTemplatesSvc.createB
 router.put('/resume-bundles/:id', mandatory, resumeEdit, resumeTemplatesSvc.updateBundle);
 router.delete('/resume-bundles/:id', mandatory, resumeEdit, resumeTemplatesSvc.deleteBundle);
 
+// ─── Course Access & Bundles (Admin configures course access/pricing) ────────
+const courseAccessSvc = require('./services/courseAccess.service');
+const { canView: courseView, canEdit: courseEdit } = courseAccessSvc;
+router.get('/course-access', mandatory, courseView, courseAccessSvc.getCourseConfigs);
+router.get('/course-access/stats', mandatory, courseView, courseAccessSvc.getStats);
+router.get('/course-access/audit', mandatory, courseView, courseAccessSvc.getAuditLog);
+router.put('/course-access', mandatory, courseEdit, courseAccessSvc.saveCourseConfigsBulk);
+router.put('/course-access/:courseId', mandatory, courseEdit, courseAccessSvc.saveCourseConfig);
+router.get('/course-bundles', mandatory, courseView, courseAccessSvc.getBundles);
+router.post('/course-bundles', mandatory, courseEdit, courseAccessSvc.createBundle);
+router.put('/course-bundles/:id', mandatory, courseEdit, courseAccessSvc.updateBundle);
+router.delete('/course-bundles/:id', mandatory, courseEdit, courseAccessSvc.deleteBundle);
+
 // ─── Marquee management (Admin creates/edits marquee notices) ─────────────────
 router.get('/marquee', marqueeSvc.getMarqueeNotices);
 router.post('/marquee', mandatory, upload.single('thumbnail'), marqueeSvc.createMarqueeNotice);

@@ -19,6 +19,7 @@ const { getTenantDB, connectTodb } = require("../../../shared/db/connection");
 const { mandatory } = require("../../../shared/middleware/auth.middleware");
 const { selectTenantDB } = require("../../../shared/middleware/selectTenantDB.middleware");
 const sucessMail = require("../../../shared/utils/sucessMail");
+const courseCatalog = require("../../student/services/courseCatalog.service");
 
 const router = express.Router();
 
@@ -676,8 +677,9 @@ router.post("/cart/createOrder", mandatory, selectTenantDB, async (req, res) => 
     const itemsWithType = await Promise.all(
       pendingItems.map(async (item) => {
         const course = await resolveCartCourse(item.courseId, req.tenantDB);
+        const rule = await courseCatalog.checkoutRule(item.courseId, course);
         const livePrice = Number(course?.pricing?.originalPrice ?? course?.price ?? item.price ?? 0);
-        const liveDiscountedPrice = Number(
+        const liveDiscountedPrice = rule.free ? 0 : Number(
           course?.pricing?.finalPrice ??
           course?.discountedPrice ??
           course?.pricing?.currentPrice ??
@@ -688,12 +690,24 @@ router.post("/cart/createOrder", mandatory, selectTenantDB, async (req, res) => 
 
         return {
           courseId: item.courseId,
-          price: livePrice,
+          title: course?.title,
+          blocked: rule.blocked,
+          price: rule.free ? 0 : livePrice,
           discountedPrice: liveDiscountedPrice,
           type: course?.type || "course",
         };
       })
     );
+
+    // Admin made a course bundle-only or hid it after it was added to the cart.
+    const blockedItem = itemsWithType.find((i) => i.blocked);
+    if (blockedItem) {
+      return res.status(400).json({
+        error: `${blockedItem.title || "A course in your cart"}: ${blockedItem.blocked}. Remove it from the cart to continue.`,
+        code: "COURSE_NOT_PURCHASABLE",
+        courseId: blockedItem.courseId,
+      });
+    }
 
     const totalAmount = itemsWithType.reduce(
       (sum, i) => sum + (i.discountedPrice ?? i.price ?? 0),
@@ -936,9 +950,15 @@ router.post("/buyNow/createOrder", mandatory, selectTenantDB, async (req, res) =
     }
 
     const type = course.type || "course";
+    // Admin course access: bundle-only / hidden courses can't be bought on
+    // their own, and admin-free courses enroll at ₹0.
+    const rule = await courseCatalog.checkoutRule(courseId, course);
+    if (rule.blocked) {
+      return res.status(400).json({ error: rule.blocked, code: "COURSE_NOT_PURCHASABLE" });
+    }
     // Never trust a client-supplied amount — resolve the real price
     // server-side from the course record itself.
-    const price =
+    const price = rule.free ? 0 :
       course.pricing?.finalPrice ??
       course.discountedPrice ??
       course.pricing?.currentPrice ??
@@ -1424,6 +1444,180 @@ router.post("/resume/verify", mandatory, async (req, res) => {
     return res.status(200).json({ success: true, message: "Payment processed successfully", itemType, itemId, expiresAt });
   } catch (error) {
     console.error("Resume verify error:", error);
+    res.status(500).json({ error: "Payment verification failed", details: error.message });
+  }
+});
+
+// ─── Course Bundles ──────────────────────────────────────────────────────────
+// Same Razorpay order → verify flow as Buy Now, for admin-priced course
+// bundles. A purchase records one courseBundle entry (with a snapshot of its
+// courses) plus a normal course enrollment for each course the student didn't
+// already have, so My Learning and progress work exactly as for Buy Now.
+const { getGlobalCollections: getCourseCollections } = require("../../../shared/db/connection");
+const courseRules = require("../../../shared/utils/courseAccess");
+
+const loadCourseBundle = (id) =>
+  mongoDB.ObjectId.isValid(id)
+    ? getCourseCollections().courseBundles.findOne({ _id: new mongoDB.ObjectId(id) })
+    : null;
+
+router.post("/course/createOrder", mandatory, selectTenantDB, async (req, res) => {
+  try {
+    const { bundleId } = req.body;
+    const bundle = await loadCourseBundle(bundleId);
+    if (!bundle || bundle.status !== "published") {
+      return res.status(404).json({ error: "This bundle is no longer available" });
+    }
+
+    // Never trust a client-supplied amount.
+    const price = Number(bundle.price) || 0;
+    if (price <= 0) return res.status(400).json({ error: "This bundle has no price set" });
+
+    // Owning some courses is fine (checkout shows which); owning all of them
+    // would make the purchase pointless, so that's refused.
+    const ctx = await courseCatalog.loadAccessContext(req.userID, req.tenantDB);
+    if (ctx.purchases.bundles.has(String(bundleId))) {
+      return res.status(400).json({ error: "You already have this bundle" });
+    }
+    const accessById = new Map((bundle.courseIds || []).map((id) => [id, ctx.accessFor(id)]));
+    if (!courseRules.bundleOverlap(bundle, accessById).newIds.length) {
+      return res.status(400).json({ error: "You already have every course in this bundle" });
+    }
+
+    const order = await instance.orders.create({
+      amount: Math.round(price * 100),
+      currency: "INR",
+      receipt: uuidv4(),
+      notes: {
+        itemType: "courseBundle",
+        itemId: String(bundleId),
+        userID: req.userID,
+        orgId: req.orgId,
+        title: String(bundle.title || "").slice(0, 200),
+      },
+    });
+
+    return res.status(200).json({
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      keyId: process.env.RZP_ID,
+      title: bundle.title,
+    });
+  } catch (error) {
+    console.error("Course bundle createOrder error:", error);
+    res.status(500).json({ error: "Failed to create order" });
+  }
+});
+
+router.post("/course/verify", mandatory, selectTenantDB, async (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return res.status(400).json({ error: "Missing payment verification fields" });
+    }
+
+    const generated_signature = Crypto.createHmac("sha256", process.env.RZP_SECRET)
+      .update(razorpay_order_id + "|" + razorpay_payment_id)
+      .digest("hex");
+    if (generated_signature !== razorpay_signature) {
+      return res.status(400).json({ success: false, error: "Invalid payment signature" });
+    }
+
+    const order = await instance.orders.fetch(razorpay_order_id);
+    const { itemType, itemId, userID } = order.notes || {};
+    if (itemType !== "courseBundle" || !itemId) {
+      return res.status(400).json({ error: "No course bundle found for this order" });
+    }
+    if (String(userID) !== String(req.userID)) {
+      return res.status(403).json({ error: "This order belongs to another account" });
+    }
+
+    // Verify can be called twice (retry / double click) — only record once.
+    const existingPayment = await payment.findOne({ orderId: razorpay_order_id });
+    if (existingPayment) {
+      return res.status(200).json({
+        success: true,
+        message: "Payment already processed",
+        bundleId: itemId,
+        enrolledCourses: existingPayment.courseIds || [],
+      });
+    }
+
+    const [student, bundle, ctx] = await Promise.all([
+      mainDBusers.findOne({ _id: new mongoDB.ObjectId(userID) }),
+      loadCourseBundle(itemId),
+      courseCatalog.loadAccessContext(userID, req.tenantDB),
+    ]);
+    if (!student) return res.status(404).json({ error: "Student not found" });
+
+    const courseIds = (bundle?.courseIds || []).map(String);
+    // Courses already owned outright keep their existing enrollment.
+    const newCourseIds = courseIds.filter((id) => !ctx.purchases.courses.has(id));
+    const validityDays = Number(bundle?.validityDays) || 0;
+    const purchasedAt = new Date();
+    const expiresAt =
+      validityDays > 0 ? new Date(purchasedAt.getTime() + validityDays * 24 * 60 * 60 * 1000) : null;
+    const amountCharged = order.amount / 100;
+    const title = bundle?.title || order.notes.title || "";
+
+    const paymentdone = await payment.insertOne({
+      orderId: razorpay_order_id,
+      paymentId: razorpay_payment_id,
+      amountCharged,
+      currency: order.currency,
+      itemType,
+      itemId,
+      itemTitle: title,
+      courseIds: newCourseIds,
+      userId: userID,
+      email: student.email,
+      createdAt: purchasedAt,
+    });
+
+    await mainDBusers.updateOne(
+      { _id: student._id },
+      {
+        $push: {
+          payment: paymentdone.insertedId.toString(),
+          subscriptions: { $each: newCourseIds },
+          enrolledData: {
+            $each: [
+              {
+                refId: itemId,
+                type: "courseBundle",
+                title,
+                orderId: razorpay_order_id,
+                amountCharged,
+                createdAt: purchasedAt,
+                expiresAt,
+                active: true,
+                // Snapshot so later bundle edits can't change what was bought.
+                courseIds,
+              },
+              ...newCourseIds.map((refId) => ({
+                refId,
+                type: "course",
+                viaBundle: itemId,
+                createdAt: purchasedAt,
+                expiresAt,
+                active: true,
+              })),
+            ],
+          },
+        },
+      }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Payment processed successfully",
+      bundleId: itemId,
+      enrolledCourses: newCourseIds,
+      expiresAt,
+    });
+  } catch (error) {
+    console.error("Course bundle verify error:", error);
     res.status(500).json({ error: "Payment verification failed", details: error.message });
   }
 });
