@@ -9,6 +9,8 @@ router.get('/company-exams', websiteController.getWebsiteCompanyExams);
 router.get('/courses', websiteController.getWebsiteCourses);
 router.get('/courses/:id', websiteController.getWebsiteCourseDetails);
 router.get('/courses/:id/coupon', websiteController.checkWebsiteCourseCoupon);
+router.get('/course-bundles', websiteController.getWebsiteCourseBundles);
+router.get('/course-bundles/:id', websiteController.getWebsiteCourseBundleDetails);
 router.get('/internships', websiteController.getWebsiteInternships);
 router.get('/internships/:id', websiteController.getWebsiteInternshipDetails);
 router.get('/internships/:id/coupon', websiteController.checkWebsiteCourseCoupon);

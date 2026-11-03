@@ -973,3 +973,328 @@ module.exports.getWebsiteInternshipDetails = async (req, res) => {
     return res.status(500).json({ success: false, err: error.message });
   }
 };
+
+module.exports.getWebsiteCourseBundles = async (req, res) => {
+  try {
+    const { courseBundles, internshipsCollection } = getGlobalCollections();
+
+    // Fetch all published bundles
+    const publishedBundles = await courseBundles
+      .find({ status: 'published' })
+      .sort({ order: 1, createdAt: -1 })
+      .toArray();
+
+    if (!publishedBundles || publishedBundles.length === 0) {
+      return res.status(200).json({
+        success: true,
+        count: 0,
+        data: []
+      });
+    }
+
+    // Collect all courseIds from all published bundles
+    const allCourseIds = [];
+    publishedBundles.forEach((b) => {
+      (b.courseIds || []).forEach((cid) => {
+        if (cid && ObjectId.isValid(cid)) {
+          allCourseIds.push(new ObjectId(cid));
+        }
+      });
+    });
+
+    const coursesDocs = allCourseIds.length > 0
+      ? await internshipsCollection.find({ _id: { $in: allCourseIds } }).toArray()
+      : [];
+
+    const coursesMap = new Map();
+    coursesDocs.forEach((c) => {
+      coursesMap.set(c._id.toString(), c);
+    });
+
+    const fallbackImages = [
+      'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=800&q=80',
+      'https://images.unsplash.com/photo-1587620962725-abab7fe55159?w=800&q=80',
+      'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=800&q=80',
+    ];
+
+    const formattedBundles = publishedBundles.map((b, idx) => {
+      const rawPrice = Number(b.price);
+      const price = !isNaN(rawPrice) && rawPrice >= 0 ? rawPrice : 0;
+      const rawMrp = Number(b.mrp);
+      const mrp = !isNaN(rawMrp) && rawMrp >= 0 ? rawMrp : 0;
+
+      const bundleCourses = (b.courseIds || []).map((cid) => {
+        const c = coursesMap.get(String(cid));
+        if (!c) {
+          return {
+            courseId: String(cid),
+            title: 'Course',
+            category: 'Technology',
+            price: 0,
+            originalPrice: 0,
+            image: fallbackImages[0],
+            thumbnail: fallbackImages[0],
+            durationHours: 16,
+            lessonsCount: 5,
+            lessons: 5
+          };
+        }
+        const cPrice = c.pricing?.finalPrice !== undefined ? Number(c.pricing.finalPrice) : (Number(c.price) || 0);
+        const cMrp = c.pricing?.originalPrice ? Number(c.pricing.originalPrice) : (cPrice > 0 ? Math.round(cPrice * 1.5) : 0);
+        const img = c.media?.thumbnailImage || c.media?.coverImage || c.media?.bannerImage || fallbackImages[0];
+
+        let cWeeks = 8;
+        if (typeof c.duration === 'string') {
+          const match = c.duration.match(/\d+/);
+          if (match) {
+            cWeeks = c.duration.toLowerCase().includes('month') ? parseInt(match[0]) * 4 : parseInt(match[0]);
+          }
+        }
+        let cHours = (cWeeks || 8) * 2;
+        if (c.courseIncludes?.videoDuration) {
+          const match = c.courseIncludes.videoDuration.match(/\d+/);
+          if (match) cHours = parseInt(match[0]);
+        }
+        const cLessons = (c.sections && c.sections.length > 0) ? c.sections.length : (c.learningPoints?.length || 5);
+
+        return {
+          courseId: c._id.toString(),
+          title: c.title,
+          category: c.category || 'Technology',
+          difficulty: c.difficulty || 'Intermediate',
+          duration: c.duration || `${cHours} hours`,
+          durationHours: cHours,
+          lessonsCount: cLessons,
+          lessons: cLessons,
+          price: cPrice,
+          originalPrice: cMrp,
+          image: img,
+          thumbnail: img,
+          slug: createSlug(c.slug || c.title),
+          sectionsCount: (c.sections || []).length || 0
+        };
+      });
+
+      const totalCoursesPrice = bundleCourses.reduce((sum, c) => sum + (c.price || 0), 0);
+      const baseline = mrp > 0 ? mrp : totalCoursesPrice;
+      const savingsPercent = baseline > price && baseline > 0 ? Math.round(((baseline - price) / baseline) * 100) : 0;
+      const totalLessons = bundleCourses.reduce((sum, c) => sum + (c.lessonsCount || 5), 0);
+      const totalHoursNum = bundleCourses.reduce((sum, c) => sum + (c.durationHours || 16), 0);
+      const totalHours = `${totalHoursNum} hours`;
+
+      const img = b.thumbnail || b.cardImage || (bundleCourses[0]?.image) || fallbackImages[idx % fallbackImages.length];
+
+      return {
+        _id: b._id.toString(),
+        id: b._id.toString(),
+        title: b.title,
+        description: b.description || '',
+        thumbnail: img,
+        cardImage: img,
+        image: img,
+        previewImage: img,
+        price,
+        mrp: baseline,
+        savingsPercent,
+        validityDays: Number(b.validityDays) || 0,
+        validityText: b.validityDays > 0 ? `${b.validityDays} Days access` : 'Lifetime access',
+        order: b.order ?? 100,
+        featured: !!b.featured,
+        badge: 'COURSE BUNDLE',
+        badgeColor: 'bg-blue-600',
+        courseIds: b.courseIds || [],
+        courseCount: (b.courseIds || []).length,
+        courses: bundleCourses,
+        totalLessons,
+        totalHours,
+        lessons: totalLessons,
+        duration: totalHours,
+        totalDuration: totalHours,
+        rating: 4.9,
+        reviews: 240 + (idx * 35),
+        slug: createSlug(b.slug || b.title),
+        status: b.status,
+        isBundle: true,
+        createdAt: b.createdAt
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      count: formattedBundles.length,
+      data: formattedBundles
+    });
+  } catch (error) {
+    console.error('[Public Website] Error fetching website course bundles:', error);
+    return res.status(500).json({ success: false, err: error.message });
+  }
+};
+
+module.exports.getWebsiteCourseBundleDetails = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { courseBundles, internshipsCollection } = getGlobalCollections();
+
+    let bundle = null;
+    if (ObjectId.isValid(id)) {
+      bundle = await courseBundles.findOne({ _id: new ObjectId(id), status: 'published' });
+    }
+    if (!bundle) {
+      // Try by string _id or slug
+      const allPublished = await courseBundles.find({ status: 'published' }).toArray();
+      bundle = allPublished.find((b) => matchesSlugOrId(b, id));
+    }
+
+    if (!bundle) {
+      return res.status(404).json({
+        success: false,
+        message: 'Course bundle not found or not published'
+      });
+    }
+
+    const courseObjectIds = (bundle.courseIds || [])
+      .filter((cid) => ObjectId.isValid(cid))
+      .map((cid) => new ObjectId(cid));
+
+    const coursesDocs = courseObjectIds.length > 0
+      ? await internshipsCollection.find({ _id: { $in: courseObjectIds } }).toArray()
+      : [];
+
+    const coursesMap = new Map();
+    coursesDocs.forEach((c) => {
+      coursesMap.set(c._id.toString(), c);
+    });
+
+    const fallbackImages = [
+      'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=800&q=80',
+      'https://images.unsplash.com/photo-1587620962725-abab7fe55159?w=800&q=80',
+    ];
+
+    const detailedCourses = (bundle.courseIds || []).map((cid) => {
+      const c = coursesMap.get(String(cid));
+      if (!c) {
+        return {
+          courseId: String(cid),
+          title: 'Course',
+          category: 'Technology',
+          description: '',
+          price: 0,
+          originalPrice: 0,
+          image: fallbackImages[0],
+          thumbnail: fallbackImages[0],
+          sections: [],
+          whatYoullLearn: []
+        };
+      }
+      const cPrice = c.pricing?.finalPrice !== undefined ? Number(c.pricing.finalPrice) : (Number(c.price) || 0);
+      const cMrp = c.pricing?.originalPrice ? Number(c.pricing.originalPrice) : (cPrice > 0 ? Math.round(cPrice * 1.5) : 0);
+      const img = c.media?.thumbnailImage || c.media?.coverImage || c.media?.bannerImage || fallbackImages[0];
+
+      let cWeeks = 8;
+      if (typeof c.duration === 'string') {
+        const match = c.duration.match(/\d+/);
+        if (match) {
+          cWeeks = c.duration.toLowerCase().includes('month') ? parseInt(match[0]) * 4 : parseInt(match[0]);
+        }
+      }
+      let cHours = (cWeeks || 8) * 2;
+      if (c.courseIncludes?.videoDuration) {
+        const match = c.courseIncludes.videoDuration.match(/\d+/);
+        if (match) cHours = parseInt(match[0]);
+      }
+      const cLessons = (c.sections && c.sections.length > 0) ? c.sections.length : (c.learningPoints?.length || 5);
+
+      return {
+        courseId: c._id.toString(),
+        id: c._id.toString(),
+        title: c.title,
+        category: c.category || 'Technology',
+        difficulty: c.difficulty || 'Intermediate',
+        duration: c.duration || `${cHours} hours`,
+        durationHours: cHours,
+        lessonsCount: cLessons,
+        lessons: cLessons,
+        price: cPrice,
+        originalPrice: cMrp,
+        image: img,
+        thumbnail: img,
+        slug: createSlug(c.slug || c.title),
+        sections: c.sections || [],
+        sectionsCount: (c.sections || []).length || 0,
+        learningPoints: c.learningPoints || [],
+        skills: c.skills || [],
+        instructor: c.instructor || 'SkillMedha Faculty'
+      };
+    });
+
+    const rawPrice = Number(bundle.price);
+    const price = !isNaN(rawPrice) && rawPrice >= 0 ? rawPrice : 0;
+    const rawMrp = Number(bundle.mrp);
+    const mrp = !isNaN(rawMrp) && rawMrp >= 0 ? rawMrp : 0;
+    const totalCoursesPrice = detailedCourses.reduce((sum, c) => sum + (c.price || 0), 0);
+    const baseline = mrp > 0 ? mrp : totalCoursesPrice;
+    const savingsPercent = baseline > price && baseline > 0 ? Math.round(((baseline - price) / baseline) * 100) : 0;
+    const totalLessons = detailedCourses.reduce((sum, c) => sum + (c.lessonsCount || 5), 0);
+    const totalHoursNum = detailedCourses.reduce((sum, c) => sum + (c.durationHours || 16), 0);
+    const totalHours = `${totalHoursNum} hours`;
+    const img = bundle.thumbnail || bundle.cardImage || detailedCourses[0]?.image || fallbackImages[0];
+
+    // Other published bundles for related bundles
+    const otherBundles = await courseBundles
+      .find({ status: 'published', _id: { $ne: bundle._id } })
+      .sort({ order: 1, createdAt: -1 })
+      .limit(3)
+      .toArray();
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        _id: bundle._id.toString(),
+        id: bundle._id.toString(),
+        title: bundle.title,
+        description: bundle.description || '',
+        thumbnail: img,
+        cardImage: img,
+        image: img,
+        previewImage: img,
+        price,
+        mrp: baseline,
+        savingsPercent,
+        validityDays: Number(bundle.validityDays) || 0,
+        validityText: bundle.validityDays > 0 ? `${bundle.validityDays} Days access` : 'Lifetime access',
+        order: bundle.order ?? 100,
+        featured: !!bundle.featured,
+        badge: 'COURSE BUNDLE',
+        badgeColor: 'bg-blue-600',
+        courseIds: bundle.courseIds || [],
+        courseCount: (bundle.courseIds || []).length,
+        courses: detailedCourses,
+        totalLessons,
+        totalHours,
+        lessons: totalLessons,
+        duration: totalHours,
+        totalDuration: totalHours,
+        rating: 4.9,
+        reviews: 240,
+        studentsCount: 1080,
+        slug: createSlug(bundle.slug || bundle.title),
+        status: bundle.status,
+        isBundle: true,
+        createdAt: bundle.createdAt,
+        relatedBundles: otherBundles.map((ob) => ({
+          _id: ob._id.toString(),
+          id: ob._id.toString(),
+          title: ob.title,
+          price: Number(ob.price) || 0,
+          mrp: Number(ob.mrp) || 0,
+          thumbnail: ob.thumbnail || ob.cardImage || fallbackImages[0],
+          courseCount: (ob.courseIds || []).length,
+          slug: createSlug(ob.slug || ob.title)
+        }))
+      }
+    });
+  } catch (error) {
+    console.error('[Public Website] Error fetching website course bundle details:', error);
+    return res.status(500).json({ success: false, err: error.message });
+  }
+};
