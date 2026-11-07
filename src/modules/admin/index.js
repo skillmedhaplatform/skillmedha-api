@@ -136,6 +136,17 @@ router.post('/course-bundles', mandatory, courseEdit, courseAccessSvc.createBund
 router.put('/course-bundles/:id', mandatory, courseEdit, courseAccessSvc.updateBundle);
 router.delete('/course-bundles/:id', mandatory, courseEdit, courseAccessSvc.deleteBundle);
 
+// ─── Membership plans (Admin configures Free / Premium / Pro) ────────────────
+const membershipsSvc = require('./services/memberships.service');
+router.get('/membership-plans', mandatory, courseView, membershipsSvc.getPlans);
+router.put('/membership-plans/:key', mandatory, courseEdit, membershipsSvc.savePlan);
+router.get('/membership-content', mandatory, courseView, membershipsSvc.getContent);
+router.put('/membership-content', mandatory, courseEdit, membershipsSvc.saveContent);
+router.get('/membership-stats', mandatory, courseView, membershipsSvc.getStats);
+router.get('/memberships', mandatory, courseView, membershipsSvc.getMembers);
+router.put('/memberships/:id/extend', mandatory, courseEdit, membershipsSvc.extendMembership);
+router.delete('/memberships/:id', mandatory, courseEdit, membershipsSvc.revokeMembership);
+
 // ─── Marquee management (Admin creates/edits marquee notices) ─────────────────
 router.get('/marquee', marqueeSvc.getMarqueeNotices);
 router.post('/marquee', mandatory, upload.single('thumbnail'), marqueeSvc.createMarqueeNotice);

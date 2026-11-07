@@ -101,6 +101,10 @@ const courseCatalogSvc = require('./services/courseCatalog.service');
 router.get('/course-catalog', mandatory, selectTenantDB, courseCatalogSvc.getCourseCatalog);
 router.get('/my-course-purchases', mandatory, courseCatalogSvc.getMyCoursePurchases);
 
+// ─── Membership plans (Free / Premium / Pro; checkout lives in payment.service) ─
+const membershipSvc = require('./services/membership.service');
+router.get('/membership', mandatory, membershipSvc.getMembership);
+
 const companyTestsSvc = require('../admin/services/companyTests.service');
 router.get('/company-tests', mandatory, selectTenantDB, companyTestsSvc.getCompanyTests);
 

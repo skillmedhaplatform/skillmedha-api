@@ -2,6 +2,7 @@ const { ObjectId } = require("mongodb");
 const { connectTodb, getGlobalCollections } = require("../../../shared/db/connection");
 const { findInAllTenants } = require("./practice.service");
 const { helpers } = require("../../admin/services/practiceSets.service");
+const { loadPlanContext } = require("./membership.service");
 
 const { toObjectId, buildQuestionQuery, sortSets, withTopicDetails, withBundleSummary } = helpers;
 
@@ -54,7 +55,7 @@ const getPurchases = async (userId) => {
 };
 
 /** Why (and until when) a student may open a practice set. */
-const getSetAccess = (set, purchases, ownedBundles) => {
+const getSetAccess = (set, purchases, ownedBundles, plan) => {
   if (set.plan === "free") return { unlocked: true, reason: "free", expiresAt: null };
 
   const id = set._id.toString();
@@ -72,7 +73,11 @@ const getSetAccess = (set, purchases, ownedBundles) => {
     };
   }
 
-  return { unlocked: false, reason: "locked", expiresAt: null };
+  // An active membership plan (see shared/utils/membership.js) that includes this set.
+  const planAccess = plan.accessFor("practiceSet", id);
+  if (planAccess) return { unlocked: true, reason: "plan", ...planAccess };
+
+  return { unlocked: false, reason: "locked", expiresAt: null, upgradePlan: plan.upgradeFor("practiceSet", id) };
 };
 
 const getOwnedBundles = (purchases) =>
@@ -86,10 +91,11 @@ const toStudentBundle = ({ createdBy, ...bundle }) => bundle;
 module.exports.getPracticeCatalog = async (req, res) => {
   try {
     const purchases = await getPurchases(req.userID);
-    const [publishedSets, publishedBundles, ownedBundles] = await Promise.all([
+    const [publishedSets, publishedBundles, ownedBundles, plan] = await Promise.all([
       findInAllTenants("practiceSets", { status: "published" }, "find"),
       findInAllTenants("practiceBundles", { status: "published" }, "find"),
       getOwnedBundles(purchases),
+      loadPlanContext(req.userID),
     ]);
 
     // Anything the student has paid for stays visible even if the admin
@@ -137,7 +143,7 @@ module.exports.getPracticeCatalog = async (req, res) => {
           return {
             ...toStudentSet(set),
             hasCompletedTest: userAttemptedTestIds.has(setIdStr),
-            access: getSetAccess(set, purchases, ownedBundles),
+            access: getSetAccess(set, purchases, ownedBundles, plan),
           };
         }),
         bundles: bundles.map((bundle) => {
@@ -169,11 +175,11 @@ module.exports.startPracticeSet = async (req, res) => {
     if (!set) return res.status(404).json({ err: "Practice set not found" });
 
     const purchases = await getPurchases(req.userID);
-    const ownedBundles = await getOwnedBundles(purchases);
-    const access = getSetAccess(set, purchases, ownedBundles);
+    const [ownedBundles, plan] = await Promise.all([getOwnedBundles(purchases), loadPlanContext(req.userID)]);
+    const access = getSetAccess(set, purchases, ownedBundles, plan);
 
     // Unpublished sets stay open only to students who already paid for them.
-    if (set.status !== "published" && !(access.unlocked && access.reason !== "free")) {
+    if (set.status !== "published" && !(access.unlocked && access.reason !== "free" && access.reason !== "plan")) {
       return res.status(404).json({ err: "This practice set is no longer available" });
     }
     if (!access.unlocked) {

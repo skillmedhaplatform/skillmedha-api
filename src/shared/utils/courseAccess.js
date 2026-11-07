@@ -108,9 +108,9 @@ const isAssignedTo = (assignment, student) => {
 
 /**
  * Why (and until when) a student may open a course's lessons.
- * reason: assigned | purchased | bundle | free | locked | hidden
+ * reason: assigned | purchased | bundle | free | plan | locked | hidden
  */
-const courseAccess = (config, { purchases, assignedIds = new Set(), bundlesById = new Map() }) => {
+const courseAccess = (config, { purchases, assignedIds = new Set(), bundlesById = new Map(), planAccess = null }) => {
   const id = String(config.courseId);
 
   if (assignedIds.has(id)) return { unlocked: true, reason: 'assigned', expiresAt: null };
@@ -123,6 +123,8 @@ const courseAccess = (config, { purchases, assignedIds = new Set(), bundlesById 
   }
   if (config.visibility !== 'published') return { unlocked: false, reason: 'hidden', expiresAt: null };
   if (config.access === 'free') return { unlocked: true, reason: 'free', expiresAt: null };
+  // An active membership plan (see membership.js) that includes this course.
+  if (planAccess) return { unlocked: true, reason: 'plan', ...planAccess };
   return { unlocked: false, reason: 'locked', expiresAt: null };
 };
 
@@ -135,7 +137,9 @@ const bundleOverlap = (bundle, accessById) => {
   const ownedIds = [];
   const newIds = [];
   for (const id of (bundle.courseIds || []).map(String)) {
-    (accessById.get(id)?.unlocked ? ownedIds : newIds).push(id);
+    // A plan ends, so its courses aren't owned — a bundle still adds them.
+    const access = accessById.get(id);
+    (access?.unlocked && access.reason !== 'plan' ? ownedIds : newIds).push(id);
   }
   return { ownedIds, newIds };
 };
