@@ -27,6 +27,7 @@ const tpoRouter = require('./modules/tpo/index');
 const testRouter = require('./modules/test/index');
 const proctoringRouter = require('./modules/proctoring/index');
 const publicRouter = require('./modules/public/index');
+const mobileAppRouter = require('./modules/mobileapp/index');
 
 // Shared service utilities (no re-export changes)
 const azureBlobService = require('./shared/utils/azureBlobService');
@@ -420,6 +421,9 @@ app.use('/', testRouter);
 
 // Proctoring module → handles: Agora (live sessions), AWS Rekognition (face detection)
 app.use('/', proctoringRouter);
+
+// Mobile App module → Dedicated mobile endpoints
+app.use('/mobileapp', mobileAppRouter);
 
 // ─── Dashboard (admin analytics) ─────────────────────────────────────────────
 app.use('/api/dashboard', dashboardRoutes);
