@@ -1,6 +1,7 @@
 const { ObjectId } = require("mongodb");
 const { getGlobalCollections, connectTodb } = require("../../../shared/db/connection");
 const rules = require("../../../shared/utils/courseAccess");
+const { loadPlanContext } = require("./membership.service");
 
 // Student side of admin-configured course access. Course content stays where
 // it is; this decides who may open a course's lessons (see the gates in
@@ -55,21 +56,23 @@ const loadAssignedIds = async (userId, tenantDB) => {
  */
 const loadAccessContext = async (userId, tenantDB) => {
   const { courseAccess, courseBundles, internshipsCollection } = getGlobalCollections();
-  const [configs, bundles, courses, purchases, assignedIds] = await Promise.all([
+  const [configs, bundles, courses, purchases, assignedIds, plan] = await Promise.all([
     courseAccess.find({}).toArray(),
     courseBundles.find({}).toArray(),
     internshipsCollection.find({ type: "course" }, { projection: COURSE_PROJECTION }).toArray(),
     loadPurchases(userId),
     loadAssignedIds(userId, tenantDB),
+    loadPlanContext(userId),
   ]);
   const configsById = new Map(configs.map((c) => [String(c.courseId), c]));
   const coursesById = new Map(courses.map((c) => [c._id.toString(), c]));
   const bundlesById = new Map(bundles.map((b) => [b._id.toString(), b]));
 
   const configFor = (id) => configsById.get(String(id)) || rules.defaultConfig(id, coursesById.get(String(id)));
-  const accessFor = (id) => rules.courseAccess(configFor(id), { purchases, assignedIds, bundlesById });
+  const accessFor = (id) =>
+    rules.courseAccess(configFor(id), { purchases, assignedIds, bundlesById, planAccess: plan.accessFor("course", id) });
 
-  return { configs, configsById, courses, coursesById, bundles, bundlesById, purchases, assignedIds, configFor, accessFor };
+  return { configs, configsById, courses, coursesById, bundles, bundlesById, purchases, assignedIds, plan, configFor, accessFor };
 };
 
 const publishedBundlesWith = (ctx, courseId) =>
@@ -128,6 +131,7 @@ module.exports.getCourseCatalog = async (req, res) => {
           visible: rules.isVisibleToStudent(config, entitlement),
           entitlement,
           bundles: publishedBundlesWith(ctx, id),
+          upgradePlan: ctx.plan.upgradeFor("course", id),
         };
       })
       .sort((a, b) => a.order - b.order);
@@ -162,6 +166,7 @@ const accessForRequest = async (req, item) => {
     visibility: config.visibility,
     price: rules.coursePrice(ctx.coursesById.get(id) || item),
     bundles: publishedBundlesWith(ctx, id),
+    upgradePlan: ctx.plan.upgradeFor("course", id),
   };
 };
 

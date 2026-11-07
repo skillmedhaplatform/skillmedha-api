@@ -156,7 +156,25 @@ function _initGlobalCollections() {
     courseAccess:           db_resources.collection('courseAccess'),
     courseBundles:          db_resources.collection('courseBundles'),
     courseConfigAudit:      db_resources.collection('courseConfigAudit'),
+    // Free / Premium / Pro plans (one doc per plan key), which courses and
+    // practice sets each opens, student memberships and audit.
+    membershipPlans:        db_resources.collection('membershipPlans'),
+    membershipContent:      db_resources.collection('membershipContent'),
+    memberships:            db_resources.collection('memberships'),
+    membershipAudit:        db_resources.collection('membershipAudit'),
   };
+
+  db_resources.collection('membershipPlans').createIndex({ key: 1 }, { unique: true, background: true })
+    .catch(err => console.warn('[DB] membershipPlans key index:', err));
+  db_resources.collection('membershipContent').createIndex({ itemType: 1, itemId: 1 }, { unique: true, background: true })
+    .catch(err => console.warn('[DB] membershipContent item index:', err));
+  db_resources.collection('memberships').createIndex({ userId: 1 }, { background: true })
+    .catch(err => console.warn('[DB] memberships userId index:', err));
+  // One membership per paid order, so a repeated verify can't add days twice.
+  db_resources.collection('memberships').createIndex(
+    { orderId: 1 },
+    { unique: true, partialFilterExpression: { orderId: { $type: 'string' } }, background: true }
+  ).catch(err => console.warn('[DB] memberships orderId index:', err));
 
   // Outside jobs synced from company job boards (see modules/student/services/jobBoards/sync.js).
   const externalJobs = db_resources.collection('externalJobs');

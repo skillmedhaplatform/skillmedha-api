@@ -1622,4 +1622,157 @@ router.post("/course/verify", mandatory, selectTenantDB, async (req, res) => {
   }
 });
 
+// ─── Membership plans ────────────────────────────────────────────────────────
+// Same Razorpay order → verify flow as course bundles. A purchase is one
+// memberships document (never an enrolledData entry); an upgrade spends the
+// unused value of the lower plan, which then stops.
+const membershipRules = require("../../../shared/utils/membership");
+const { loadPlans, loadMemberships } = require("../../student/services/membership.service");
+
+router.post("/membership/createOrder", mandatory, async (req, res) => {
+  try {
+    const { planKey } = req.body;
+    const days = Number(req.body.days);
+    const plan = (await loadPlans()).find((p) => p.key === planKey);
+    const option = (plan?.options || []).find((o) => o.days === days);
+    if (!plan || plan.status !== "published" || !option) {
+      return res.status(404).json({ error: "This plan is no longer available" });
+    }
+
+    const docs = await loadMemberships(req.userID);
+    const blocked = membershipRules.purchaseBlock(membershipRules.currentMembership(docs), planKey);
+    if (blocked) return res.status(400).json({ error: blocked });
+
+    // Never trust a client-supplied amount.
+    const { payable } = membershipRules.quote(option, docs, planKey);
+    const title = `${plan.name} plan · ${days} days`;
+    const order = await instance.orders.create({
+      amount: Math.round(payable * 100),
+      currency: "INR",
+      receipt: uuidv4(),
+      notes: {
+        itemType: "membership",
+        itemId: planKey,
+        days: String(days),
+        userID: req.userID,
+        orgId: req.orgId,
+        title,
+      },
+    });
+
+    return res.status(200).json({
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      keyId: process.env.RZP_ID,
+      title,
+    });
+  } catch (error) {
+    console.error("Membership createOrder error:", error);
+    res.status(500).json({ error: "Failed to create order" });
+  }
+});
+
+router.post("/membership/verify", mandatory, async (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return res.status(400).json({ error: "Missing payment verification fields" });
+    }
+
+    const generated_signature = Crypto.createHmac("sha256", process.env.RZP_SECRET)
+      .update(razorpay_order_id + "|" + razorpay_payment_id)
+      .digest("hex");
+    if (generated_signature !== razorpay_signature) {
+      return res.status(400).json({ success: false, error: "Invalid payment signature" });
+    }
+
+    const order = await instance.orders.fetch(razorpay_order_id);
+    const { itemType, itemId: planKey, userID, days: rawDays, title } = order.notes || {};
+    const days = Number(rawDays);
+    if (itemType !== "membership" || !membershipRules.PAID_PLAN_KEYS.includes(planKey) || !(days > 0)) {
+      return res.status(400).json({ error: "No membership plan found for this order" });
+    }
+    if (String(userID) !== String(req.userID)) {
+      return res.status(403).json({ error: "This order belongs to another account" });
+    }
+
+    const { memberships } = getCourseCollections();
+    const processed = (existing) =>
+      res.status(200).json({
+        success: true,
+        message: "Payment already processed",
+        planKey,
+        expiresAt: existing.expiresAt,
+      });
+
+    // Verify can be called twice (retry / double click) — only record once.
+    const existing = await memberships.findOne({ orderId: razorpay_order_id });
+    if (existing) return processed(existing);
+
+    const student = await mainDBusers.findOne({ _id: new mongoDB.ObjectId(userID) });
+    if (!student) return res.status(404).json({ error: "Student not found" });
+
+    const docs = await loadMemberships(userID);
+    const purchasedAt = new Date();
+    const amountCharged = order.amount / 100;
+    const window = membershipRules.nextWindow(docs, planKey, days);
+
+    // The membership goes first: it is what the student paid for, and the
+    // unique orderId index stops two simultaneous verifies adding days twice.
+    try {
+      await memberships.insertOne({
+        userId: String(userID),
+        planKey,
+        days,
+        source: "payment",
+        status: "active",
+        orderId: razorpay_order_id,
+        amountCharged,
+        createdAt: purchasedAt,
+        ...window,
+      });
+    } catch (error) {
+      if (error.code !== 11000) throw error;
+      return processed(await memberships.findOne({ orderId: razorpay_order_id }));
+    }
+
+    // Their unused value was spent on this order.
+    const lowerPlans = membershipRules.PAID_PLAN_KEYS.filter(
+      (key) => membershipRules.planRank(key) < membershipRules.planRank(planKey)
+    );
+    if (lowerPlans.length) {
+      await memberships.updateMany(
+        { userId: String(userID), planKey: { $in: lowerPlans }, status: "active", amountCharged: { $gt: 0 } },
+        { $set: { status: "upgraded", upgradedAt: purchasedAt, upgradedByOrder: razorpay_order_id } }
+      );
+    }
+
+    const paymentdone = await payment.insertOne({
+      orderId: razorpay_order_id,
+      paymentId: razorpay_payment_id,
+      amountCharged,
+      currency: order.currency,
+      itemType,
+      itemId: planKey,
+      itemTitle: title || "",
+      days,
+      userId: userID,
+      email: student.email,
+      createdAt: purchasedAt,
+    });
+    await mainDBusers.updateOne({ _id: student._id }, { $push: { payment: paymentdone.insertedId.toString() } });
+
+    return res.status(200).json({
+      success: true,
+      message: "Payment processed successfully",
+      planKey,
+      expiresAt: window.expiresAt,
+    });
+  } catch (error) {
+    console.error("Membership verify error:", error);
+    res.status(500).json({ error: "Payment verification failed", details: error.message });
+  }
+});
+
 module.exports = router;
